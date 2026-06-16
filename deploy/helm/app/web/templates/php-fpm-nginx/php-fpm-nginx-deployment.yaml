@@ -111,11 +111,19 @@ spec:
                 cpu: {{ .Values.php_fpm.resources.limits.cpu | default "500m"}}
                 memory: {{ .Values.php_fpm.resources.limits.memory | default "512Mi"}}
             workingDir: /var/www/html
-            {{- if .Values.development.mount }}
             volumeMounts:
+              - name: printer-cert
+                mountPath: /var/www/html/storage/app/qztray-public/cert.pem
+                subPath: tls.crt
+                readOnly: true
+              - name: printer-cert
+                mountPath: /var/www/html/storage/app/qztray-private/key.pem
+                subPath: tls.key
+                readOnly: true
+              {{- if .Values.development.mount }}
               - name: code
                 mountPath: /var/www/html
-            {{- end }}
+              {{- end }}
           - name: nginx-sidecar
             env:
               - name: TZ
