@@ -115,7 +115,6 @@ spec:
             volumeMounts:
               - name: code
                 mountPath: /var/www/html
-
             {{- end }}
           - name: nginx-sidecar
             env:
@@ -140,22 +139,22 @@ spec:
                 mountPath: /etc/nginx/conf.d/zz-default.conf
                 subPath: zz-default.conf # 這是 ConfigMap 裡的 Key
                 readOnly: true
-              - name: qztray-secret
-                mountPath: /var/www/html/storage/app/qztray-public
-                subPath: cert.pem
+              - name: printer-cert
+                mountPath: /var/www/html/storage/app/qztray-public/cert.pem
+                subPath: tls.crt
                 readOnly: true
-              - name: qztray-secret
-                mountPath: /var/www/html/storage/app/qztray-private
-                subPath: key.pem
+              - name: printer-cert
+                mountPath: /var/www/html/storage/app/qztray-private/key.pem
+                subPath: tls.key
                 readOnly: true
       restartPolicy: Always
       volumes:
         - name: nginx-default-configuration
           configMap:
             name: nginx-default-configuration
-        - name: qztray-secret
+        - name: printer-cert
           secret:
-            secretName: qztray-secret
+            secretName: printer-cert-tls
         {{- if .Values.development.mount }}
         - name: code
           hostPath:

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: app-certifications
+description: Application-level certificates issued by local-ca-issuer
+type: application
+version: 0.1.0

@@ -187,7 +187,7 @@ tasks:
         done
 
   cert:
-    desc: "🔐 部署 cert-manager 及 local CA issuer"
+    desc: "🔐 部署 cert-manager 及 local CA issuer、應用層憑證"
     silent: true
     cmds:
       - helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager
@@ -200,6 +200,11 @@ tasks:
           --namespace cert-manager --timeout=120s
       - helm upgrade --install cert-issue ./deploy/helm/infra/cert-manager
           --namespace cert-manager
+          --wait
+      - helm upgrade --install app-certifications ./deploy/helm/infra/app-certifications
+          --namespace cert-manager
+      - kubectl wait --for=condition=Ready certificate/printer-cert
+          --namespace web --timeout=120s
 
 
 

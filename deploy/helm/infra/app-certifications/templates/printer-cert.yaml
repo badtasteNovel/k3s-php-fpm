@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: printer-cert
+  namespace: web
+spec:
+  secretName: printer-cert-tls
+  duration: 87600h
+  renewBefore: 720h
+  commonName: sureway.local
+  subject:
+    organizations:
+      - Sureway
+    countries:
+      - TW
+    localities:
+      - Taichung
+    provinces:
+      - Taiwan
+  issuerRef:
+    name: local-ca-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
