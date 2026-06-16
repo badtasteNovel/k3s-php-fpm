@@ -1,0 +1,5 @@
+apiVersion: v2
+name: k3s-maintenance
+description: K3s node 定期維護任務
+type: application
+version: 1.0.0

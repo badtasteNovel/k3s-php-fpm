@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-backup-claim
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.database_backup.resources.requests.storage | default "1Gi" | quote }}
+    limits:
+      storage: {{ .Values.database_backup.resources.limits.storage | default "1Gi" | quote }}
+  volumeName: nas-forgejo-git-backup
+  storageClassName: "nas-backup-storage"

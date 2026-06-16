@@ -1,0 +1,81 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    # 這裡放你原本想寫的第二個名字，作為說明
+    network-type: "allow-ingress-from-internal-gateway-namespace-to-web"
+    description: "允許來自 internal-gateway 命名空間的 Ingress 流量"
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+  name: web-app-network
+  namespace: web
+spec:
+  podSelector: &webAppSelector
+    matchLabels:
+      io.kompose.network/web-app-network: "true"
+  policyTypes:
+   - Ingress
+   - Egress
+  ingress: # 入站流量
+    - from:
+      # 允許「同一個網路標籤」的人互連
+      - podSelector: *webAppSelector # 這裡直接引用上面的 Anchor
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: internal-gateway
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: traefik
+            app.kubernetes.io/instance: internal-gateway-internal-gateway
+      - ipBlock:
+          cidr: 192.168.0.0/24 # <--- 修改為你的實際內網網段
+          #except:
+          #  - 192.168.0.65/32 嘗試
+  egress:
+    - to:
+      - ipBlock:
+          cidr: 192.168.0.242/32
+      ports:
+      - protocol: TCP
+        port: 443
+    - to:
+      - podSelector: *webAppSelector # 允許 Laravel 連到 Database
+    - to:
+      - podSelector:
+          matchLabels:
+            io.kompose.network/web-redis-network: "true" # 💥 新增這行，允許連到 Redis
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: service
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: temporal
+            app.kubernetes.io/component: frontend
+            io.kompose.network/service-app-network: "true"
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitor
+        podSelector:
+          matchLabels:
+            io.kompose.service: monitor-postgresql
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: monitor
+        podSelector:
+          matchLabels:
+            io.kompose.service: pulse-redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    - ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP # 允許查詢 DNS

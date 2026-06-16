@@ -1,0 +1,219 @@
+
+version: '3'
+includes:
+  debug: scripts/tasks/debug.yaml
+  mount: scripts/tasks/mount.yaml
+  secret: scripts/tasks/secret.yaml
+  # 清理磁碟
+  dev-disk: scripts/tasks/dev/wsl/disk.yaml
+  install: scripts/tasks/install-k3s/install.yaml
+  uninstall: scripts/tasks/install-k3s/uninstall.yaml
+  init: scripts/tasks/init.yaml
+  bootstrap: scripts/tasks/bootstrap.yaml
+  bootstrap-dev: scripts/tasks/bootstrap-dev.yaml
+  manual: scripts/tasks/ci/manual.yaml
+  decode: scripts/tasks/decode.yaml
+  trust: scripts/tasks/trust.yaml
+  ops: scripts/tasks/ops.yaml
+  job: scripts/tasks/job.yaml
+  registry: scripts/tasks/registry.yaml
+  login: scripts/tasks/login.yaml
+dotenv:
+  - .env.task
+vars:
+  RED_BANG: "\e[1;31m!\e[0m"
+  CHECK_MARK: "\e[1;32m✅\e[0m"
+  NAS_BACKUP_PATH: /mnt/nas_backup
+
+  DOCKER_WEB_DEV: -f docker-compose-web-server.yaml -f docker-compose-web-server-override.yaml
+  DOCKER_SERVICE: -f docker-compose-service-server.yaml
+  CHOOSE: "bash ./scripts/bin/choose.sh"
+tasks:
+  main:
+    silent: true
+    desc: "🚀 互動式任務選擇器"
+    cmd: |
+      NAMESPACES="production-deploy
+      debug
+      mount
+      secret
+      dev-disk"
+
+      NS=$(echo "$NAMESPACES" | gum choose --header "選擇 Task 分類：")
+      [ -z "$NS" ] && exit 0
+
+      CHOICE=$(task --list-all | grep -E "^\* ${NS}:" | awk '{print $2}' | sed 's/:$//' | gum choose --header "選擇要執行的 Task：")
+      [ -z "$CHOICE" ] && exit 0
+
+      task $CHOICE
+
+  git:
+    desc: "🔑 開啟已載入 Forgejo 認證的互動 shell，可直接執行 git 指令（exit 離開）"
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        GIT_USER=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.username}' | base64 -d)
+        GIT_PASS=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.password}' | base64 -d)
+        if [ -d /dev/shm ]; then TMPCREDS=$(mktemp /dev/shm/git-creds-XXXXXX); else TMPCREDS=$(mktemp); fi
+        chmod 700 "$TMPCREDS"
+        trap "rm -f '$TMPCREDS'" EXIT
+        printf '#!/bin/sh\necho "username=%s"\necho "password=%s"\n' "$GIT_USER" "$GIT_PASS" > "$TMPCREDS"
+        echo "🔑 Forgejo 認證已載入，可直接執行 git 指令（exit 離開）"
+        GIT_TERMINAL_PROMPT=0 \
+        GIT_CONFIG_COUNT=2 \
+        GIT_CONFIG_KEY_0="credential.helper" \
+        GIT_CONFIG_VALUE_0="" \
+        GIT_CONFIG_KEY_1="credential.helper" \
+        GIT_CONFIG_VALUE_1="!$TMPCREDS" \
+          "$SHELL"
+
+  grep:
+    desc: "🔍 依照完整檔名（含副檔名）搜尋整個專案目錄"
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        FILENAME=$(gum input --placeholder "請輸入檔案名稱（含副檔名，例如：index.php）" --prompt "🔍 檔案名稱: ")
+        [ -z "$FILENAME" ] && exit 0
+        echo "🔍 正在搜尋：$FILENAME ..."
+        RESULTS=$(find . \
+          -not -path "*/node_modules/*" \
+          -not -path "*/.git/*" \
+          -not -path "*/vendor/*" \
+          -name "*$FILENAME*")
+        if [ -z "$RESULTS" ]; then
+          echo "❌ 找不到符合的檔案：$FILENAME"
+        else
+          echo "$RESULTS"
+        fi
+
+  status:
+    desc: "選擇當前想要看的狀態"
+    silent: true
+    cmd: "{{ .CHOOSE }} scripts/bin/status/kubectl-status.sh"
+
+  migrate:
+    desc: 'migration相關指令'
+    silent: true
+    cmd: "{{ .CHOOSE }} ./scripts/bin/database/migration.sh"
+
+  php:
+    desc: '在 php-fpm 容器執行指令（task php -- php artisan test ...）'
+    silent: true
+    cmds:
+      - kubectl exec -i deployment/php-fpm-nginx -n web -c php-fpm -- {{.CLI_ARGS}}
+  pulse:
+    desc: '執行 Laravel Pulse migrate'
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        if gum confirm "確認要執行 Pulse migrate 嗎？"; then
+          kubectl exec -i deployment/php-fpm-nginx -n web -c php-fpm -- \
+            env SESSION_DRIVER=array \
+            php artisan migrate --database=pulse --path=database/migrations/pulse --force
+          gum style --foreground 118 "✅ Pulse 資料庫遷移成功！"
+        else
+          gum style --foreground 240 "操作已取消。"
+        fi
+
+
+  telescope:
+    desc: '執行 Laravel Telescope migrate'
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        if gum confirm "確認要執行 Telescope migrate 嗎？"; then
+          kubectl exec -i deployment/php-fpm-nginx -n web -c php-fpm -- \
+            env SESSION_DRIVER=array \
+            php artisan migrate --database=telescope --path=database/migrations/telescope --force
+          gum style --foreground 118 "✅ Telescope 資料庫遷移成功！"
+        else
+          gum style --foreground 240 "操作已取消。"
+        fi
+
+  ping-service:
+    desc: '🔍 輸入 IP 直接抓出 K8s 資源與健康狀況'
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        read -p "請輸入要查詢的 IP: " TIP
+        if [ -z "$TIP" ]; then exit 0; fi
+
+        # 一次抓取所有 svc 和 pod 的 json 進行比對
+        RES=$(kubectl get svc,pod -A -o json | jq -r --arg ip "$TIP" '.items[] | select(.spec.clusterIP == $ip or .status.podIP == $ip) | "\(.kind) \(.metadata.namespace) \(.metadata.name)"')
+
+        if [ -z "$RES" ]; then echo "❌ 找不到任何匹配的資源"; exit 0; fi
+
+        KIND=$(echo $RES | awk '{print $1}')
+        NS=$(echo $RES | awk '{print $2}')
+        NAME=$(echo $RES | awk '{print $3}')
+
+        echo "✅ 找到 $KIND: [$NS/$NAME]"
+        echo "--------------------------------------------------"
+
+        if [ "$KIND" == "Service" ]; then
+            # 如果是 Service，直接看 Endpoints
+            kubectl get svc,ep -n $NS $NAME
+        else
+            # 如果是 Pod，看它的狀態與 IP
+            kubectl get pod -n $NS $NAME -o wide
+        fi
+
+        echo "--------------------------------------------------"
+        echo "💡 快速診斷建議："
+        [ "$KIND" == "Service" ] && echo "若 Endpoints 為 <none>，請檢查 Pod Label 是否匹配。"
+        [ "$KIND" == "Pod" ] && echo "若 Status 非 Running，請跑 'kubectl logs -n $NS $NAME' 檢查程式報錯。"
+
+  dev:
+    desc: "🚀 開發模式：port-forward + PHP 熱更新（需要 watchexec）"
+    silent: true
+    preconditions:
+      - sh: '[ $(id -u) -eq 0 ]'
+        msg: "請用 sudo task dev 執行"
+    cmds:
+      - |
+        bash << 'END'
+        trap 'kill 0' EXIT
+        pkill -f "kubectl port-forward" 2>/dev/null || true
+        (while true; do
+          echo "[traefik] port-forward 啟動..."
+          kubectl port-forward -n gateway svc/external-gateway-traefik 80:80 443:443 --address=127.0.0.1
+          echo "[traefik] 斷線，重連中..."
+          sleep 1
+        done) &
+        (while true; do
+          echo "[vite] port-forward 啟動..."
+          kubectl port-forward -n web svc/vite-serve-service 5173:5173 --address=127.0.0.1
+          echo "[vite] 斷線，重連中..."
+          sleep 1
+        done) &
+        (while true; do
+          echo "[db] port-forward 啟動..."
+          kubectl port-forward -n web svc/database 5432:5432 --address=127.0.0.1
+          echo "[db] 斷線，重連中..."
+          sleep 1
+        done) &
+        watchexec --exts php \
+          --ignore storage --ignore vendor --ignore node_modules \
+          -- kubectl exec -n web deployment/php-fpm-nginx -c php-fpm -- pkill -USR2 php-fpm &
+        echo "✅ dev 模式已啟動，按 Ctrl+C 停止所有服務"
+        wait
+        END
+
+  lifecycle:
+    desc: "🔄 重啟 Pod 所屬的 Deployment (使 Secret/Config 生效)"
+    silent: true
+    cmd: "{{ .CHOOSE }} ./scripts/bin/kubectl-lifecycle.sh"
+
+  install:
+    desc: '各種安裝'
+    cmds:
+     - "{{ .CHOOSE }} scripts/bin/install/install.sh"
+     - source ~/.bashrc
+    preconditions:
+      - sh: '[ $(id -u) -eq 0 ]'
+        msg: "錯誤：必須使用sudo"

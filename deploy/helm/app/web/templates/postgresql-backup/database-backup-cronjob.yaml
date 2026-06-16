@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+  namespace: web # <--- 這裡指定門牌號碼
+  labels:
+    io.kompose.service: database-backup
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  schedule: "0 0 */5 * *" # 每 5 天的凌晨 0:00 執行
+  concurrencyPolicy: Forbid # 如果前一次還沒跑完，這一次不准重疊執行
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 60
+      {{ include "db-backup.podTemplate" . | nindent 6 }}

@@ -1,0 +1,107 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+version: '3'
+tasks:
+  install-k3s:
+      desc: '安裝 k3s'
+      silent: true
+      status:
+        - kubectl get nodes --request-timeout=250ms
+      vars:
+        K3S_CFG: "/etc/rancher/k3s/k3s.yaml"
+        IS_DYNAMIC_IP:
+          sh: gum confirm "請問是浮動ip環境嗎，警告:將會覆蓋預設k3s啟動程序參數" --affirmative "浮動ip環境" --negative "固定ip環境" && echo 1 || echo 0
+        NODE_IP:
+          sh: ip route get 1 | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}'
+      cmds:
+        - task: _patch-k3s-service
+          vars: { IS_DYNAMIC_IP: "{{.IS_DYNAMIC_IP}}"}
+        - |
+          while sudo ss -tlnp | grep -q ":6443 "; do
+              OCCUPIER=$(sudo ss -tlnp | grep ":6443" | awk '{print $NF}')
+              echo "埠口 6443 仍被佔用: $OCCUPIER"
+              echo "等待 1 秒後重新檢查..."
+              sleep 1
+          done
+        - task: _setup-k3s-binary
+          vars: { IS_DYNAMIC_IP: "{{.IS_DYNAMIC_IP}}"}
+        - |
+          echo "等待 6443 埠口就緒..."
+          until ss -antl | grep -q ":6443\s"; do sleep 1; done
+
+          echo "檢查 API 憑證有效性..."
+          MAX_RETRIES=10
+          COUNT=0
+          while ! kubectl --kubeconfig="{{.K3S_CFG}}" get nodes > /dev/null 2>&1; do
+            echo "憑證尚未同步，等待中... ($((++COUNT))/$MAX_RETRIES)"
+            if [ $COUNT -ge $MAX_RETRIES ]; then
+              echo "警告：等待超時，K3s 可能正在重啟中..."
+            fi
+            sleep 2
+          done
+
+
+          echo "憑證驗證成功！現在執行 _setup-kubeconfig..."
+        - task: _setup-kubeconfig
+      preconditions:
+        - sh: '[ $(id -u) -eq 0 ]'
+          msg: "錯誤：必須使用sudo"
+
+  _patch-k3s-service:
+    interactive: true
+    desc: 'k3s的啟動配置'
+    silent: true
+    vars:
+      IS_DYNAMIC_IP: '{{.IS_DYNAMIC_IP | default "0"}}'
+      K3S_SYSTEM_DIR: /etc/systemd/system/k3s.service.d
+    cmds:
+      - |
+        sudo mkdir -p {{ .K3S_SYSTEM_DIR }}
+        printf '%s\n' \
+          "[Service]" \
+          "TimeoutStartSec=300" \
+        | sudo tee {{ .K3S_SYSTEM_DIR }}/custom-default.conf >/dev/null
+        if gum confirm "是否為開發模式？需要設定 registry mirror" \
+          --affirmative "是，設定 registry mirror" \
+          --negative "否，跳過"; then
+          sudo bash scripts/bin/install/k3s/pre-script/k3s-pre-script-config.sh setup_wsl
+        else
+          sudo bash scripts/bin/install/k3s/pre-script/k3s-pre-script-config.sh setup
+        fi
+        sudo bash scripts/bin/install/k3s/k3s-config.sh systemConfig
+
+
+  _setup-k3s-binary:
+    desc: '檢查並安裝 k3s 二進位檔'
+    internal: true
+    silent: true
+    status:
+      - which k3s && k3s --version
+    vars:
+      IS_DYNAMIC_IP: '{{.IS_DYNAMIC_IP | default "0"}}'
+    cmds:
+      - sudo bash scripts/bin/install/k3s/k3s-config.sh installation --is-dynamic-ip="{{.IS_DYNAMIC_IP}}"
+
+
+  _setup-kubeconfig:
+    desc: '強制更新 kubeconfig'
+ #   internal: true
+    silent: true
+    cmds:
+      - |
+        REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+        mkdir -p "$REAL_HOME/.kube"
+        sudo rm -f "$REAL_HOME/.kube/config"
+        sudo cp --remove-destination /etc/rancher/k3s/k3s.yaml "$REAL_HOME/.kube/config"
+        chown "$SUDO_UID:$SUDO_GID" "$REAL_HOME/.kube/config"
+        if ! grep -q "KUBECONFIG" $REAL_HOME/.bashrc; then
+          echo 'export KUBECONFIG=$HOME/.kube/config' >> $REAL_HOME/.bashrc
+        fi
+      - |
+        mkdir -p "$HOME/.kube"
+        sudo rm -f "$HOME/.kube/config"
+        sudo cp --remove-destination /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+        sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
+        if ! grep -q "KUBECONFIG" $HOME/.bashrc; then
+          echo 'export KUBECONFIG=$HOME/.kube/config' >> ~/.bashrc
+        fi

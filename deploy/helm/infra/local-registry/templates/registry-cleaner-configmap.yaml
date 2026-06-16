@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: registry-cleaner-script
+  namespace: {{ .Release.Namespace }}
+data:
+  {{- if .Values.registryCleaner.imageCleanup.enabled }}
+  image-cleanup.sh: |
+    #!/bin/sh
+    REGISTRY="https://registry.local"
+    CACERT="/certs/ca.crt"
+    FORGEJO_HOST="forgejo-http.forgejo.svc.cluster.local"
+    FORGEJO_PORT="3000"
+    FORGEJO_REPO="sureway_tachiung/indium"
+    RETENTION_DAYS={{ .Values.registryCleaner.imageCleanup.retentionDays }}
+
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] === 環境診斷 ==="
+    echo "  /registry-auth 掛載："
+    ls -la /registry-auth/ 2>&1 || echo "  ❌ /registry-auth 目錄不存在"
+    echo "  /ssh 掛載："
+    ls -la /ssh/ 2>&1 || echo "  ❌ /ssh 目錄不存在"
+    echo "  /certs 掛載："
+    ls -la /certs/ 2>&1 || echo "  ❌ /certs 目錄不存在"
+    echo "==============================="
+
+    if [ -n "$RETENTION_SECONDS" ]; then
+      CUTOFF_TS=$(( $(date +%s) - RETENTION_SECONDS ))
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 清理 ${RETENTION_SECONDS} 秒以前的 manifests..."
+    else
+      CUTOFF_TS=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 清理 ${RETENTION_DAYS} 天以前的 manifests..."
+    fi
+    CUTOFF_TIME=$(date -u -d "@${CUTOFF_TS}" "+%Y-%m-%d %H:%M UTC" 2>/dev/null || echo "ts:${CUTOFF_TS}")
+    echo "  cutoff = ${CUTOFF_TIME}"
+    TOTAL=0
+    ACCEPT="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 解析 registry auth..."
+    REGISTRY_AUTH=$(grep -o '"registry\.local":{"auth":"[^"]*"' /registry-auth/config.json \
+      | sed 's/.*"auth":"\([^"]*\)".*/\1/' | base64 -d)
+    if [ -z "$REGISTRY_AUTH" ]; then
+      echo "  ❌ REGISTRY_AUTH 為空，config.json 內容："
+      cat /registry-auth/config.json 2>&1 || echo "  （無法讀取）"
+    else
+      echo "  ✅ REGISTRY_AUTH 已取得（user: $(echo "$REGISTRY_AUTH" | cut -d: -f1)）"
+    fi
+    TMPNETRC=$(mktemp); chmod 600 "$TMPNETRC"
+    printf 'machine registry.local login %s password %s\n' \
+      "$(echo "$REGISTRY_AUTH" | cut -d: -f1)" \
+      "$(echo "$REGISTRY_AUTH" | cut -d: -f2-)" > "$TMPNETRC"
+    trap "rm -f '$TMPNETRC'" EXIT
+
+    TMPSSH=$(mktemp -d)
+    chmod 700 "$TMPSSH"
+    trap "rm -rf '$TMPSSH'" EXIT
+    cp /ssh/sshPrivateKey "$TMPSSH/id_ed25519"
+    chmod 600 "$TMPSSH/id_ed25519"
+    printf 'Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n' \
+      > "$TMPSSH/config"
+    chmod 600 "$TMPSSH/config"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 正在 clone repo 以取得 commit 時間..."
+    if GIT_SSH_COMMAND="ssh -i $TMPSSH/id_ed25519 -F $TMPSSH/config" \
+        git -c core.fsmonitor=false clone --quiet \
+        "ssh://git@forgejo-ssh.forgejo.svc.cluster.local:22/${FORGEJO_REPO}.git" \
+        "$TMPSSH/repo" 2>&1; then
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Clone 完成。"
+    else
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 警告：git clone 失敗，跳過 image 清理"
+      exit 0
+    fi
+
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 查詢 registry repo 清單..."
+    echo "  URL: ${REGISTRY}/v2/_catalog"
+    CATALOG_HTTP=$(curl -s -o /tmp/catalog_body.txt -w "%{http_code}" --cacert "${CACERT}" --netrc-file "$TMPNETRC" "${REGISTRY}/v2/_catalog" 2>/tmp/catalog_err.txt)
+    CATALOG_RAW=$(cat /tmp/catalog_body.txt 2>/dev/null)
+    CATALOG_ERR=$(cat /tmp/catalog_err.txt 2>/dev/null)
+    echo "  HTTP: ${CATALOG_HTTP}"
+    echo "  body: ${CATALOG_RAW}"
+    [ -n "$CATALOG_ERR" ] && echo "  stderr: ${CATALOG_ERR}"
+    REPOS=$(echo "$CATALOG_RAW" | sed 's/.*\[//' | sed 's/\].*//' | tr ',' '\n' | tr -d '"')
+    [ "$CATALOG_HTTP" != "200" ] && echo "  ❌ _catalog 失敗（HTTP ${CATALOG_HTTP}），略過" && exit 1
+    REPO_COUNT=$(echo "$REPOS" | grep -c '[^[:space:]]' 2>/dev/null || echo 0)
+    echo "  解析出 ${REPO_COUNT} 個 repo"
+
+    for repo in $REPOS; do
+      [ -z "$repo" ] && continue
+      TAGS_RAW=$(curl -s --cacert "${CACERT}" --netrc-file "$TMPNETRC" "${REGISTRY}/v2/${repo}/tags/list")
+      echo ""
+      echo "  📦 ${repo}："
+      echo "    tags/list 回應: ${TAGS_RAW}"
+      TAGS=$(echo "$TAGS_RAW" | sed 's/.*"tags":\[//' | sed 's/\].*//' | tr ',' '\n' | tr -d '"')
+      if [ -z "$TAGS" ]; then
+        echo "    ⚠️  沒有任何 tag，略過"
+        continue
+      fi
+
+      for tag in $TAGS; do
+        [ -z "$tag" ] && continue
+        case "$tag" in
+          [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]|\
+          [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+          *)
+            echo "    ⏭  ${tag}（穩定版，略過）"
+            continue ;;
+        esac
+
+        CREATED_TS=$(git -C "$TMPSSH/repo" log -1 --format="%ct" "$tag" 2>/dev/null)
+        if [ -z "$CREATED_TS" ]; then
+          echo "    ❓  ${tag}（commit 不在 repo，略過）"
+          continue
+        fi
+
+        CREATED_TIME=$(date -u -d "@${CREATED_TS}" "+%Y-%m-%d %H:%M UTC" 2>/dev/null || echo "ts:${CREATED_TS}")
+
+        if [ "$CREATED_TS" -ge "$CUTOFF_TS" ]; then
+          echo "    ✅  ${tag}（${CREATED_TIME}，尚在保留期）"
+          continue
+        fi
+
+        DIGEST_RESP=$(curl -sI -w "\nHTTP_CODE:%{http_code}" --cacert "${CACERT}" --netrc-file "$TMPNETRC" \
+          -H "Accept: ${ACCEPT}" \
+          "${REGISTRY}/v2/${repo}/manifests/${tag}" 2>&1)
+        DIGEST=$(echo "$DIGEST_RESP" | grep -i "docker-content-digest:" | tr -d '\r' | awk '{print $2}')
+        DIGEST_HTTP=$(echo "$DIGEST_RESP" | grep "^HTTP_CODE:" | cut -d: -f2)
+        if [ -z "$DIGEST" ]; then
+          echo "    ⚠️  ${tag}（${CREATED_TIME}，無法取得 digest HTTP=${DIGEST_HTTP}，略過）"
+          continue
+        fi
+
+        HTTP=$(curl -s --cacert "${CACERT}" --netrc-file "$TMPNETRC" -o /dev/null -w "%{http_code}" -X DELETE \
+          "${REGISTRY}/v2/${repo}/manifests/${DIGEST}")
+        if [ "$HTTP" = "202" ]; then
+          echo "    🗑  ${tag}（${CREATED_TIME}）→ 已刪除"
+          TOTAL=$((TOTAL + 1))
+        else
+          echo "    ⚠️  ${tag}（${CREATED_TIME}）→ 刪除失敗 HTTP ${HTTP}"
+        fi
+      done
+    done
+
+    echo ""
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 共刪除 ${TOTAL} 個 manifest。"
+  {{- end }}
+  scale-down.sh: |
+    #!/bin/sh
+    set -e
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 正在停止 Registry（{{ .Values.registryCleaner.deploymentName }}）..."
+    kubectl scale deployment/{{ .Values.registryCleaner.deploymentName }} \
+      -n {{ .Release.Namespace }} --replicas=0
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 等待 Pod 完全停止..."
+    kubectl wait pod \
+      -n {{ .Release.Namespace }} \
+      -l io.kompose.service={{ .Values.registryCleaner.deploymentName }} \
+      --for=delete \
+      --timeout=120s
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Registry 已停止。"
+  clean.sh: |
+    #!/bin/sh
+    set -e
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 正在回收未被 tag 引用的 blob..."
+    /bin/registry garbage-collect --delete-untagged /etc/docker/registry/config.yml
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Garbage collection 完成。"
+  scale-up.sh: |
+    #!/bin/sh
+    set -e
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 正在重啟 Registry（{{ .Values.registryCleaner.deploymentName }}）..."
+    kubectl scale deployment/{{ .Values.registryCleaner.deploymentName }} \
+      -n {{ .Release.Namespace }} --replicas=1
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Registry 重啟完成。"

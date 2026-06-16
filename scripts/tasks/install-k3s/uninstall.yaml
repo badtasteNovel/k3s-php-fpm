@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+  uninstall-k3s:
+      desc: '卸載k3s'
+      silent: true
+      cmds:
+        - |
+          # 1. 詢問使用者。如果 Ctrl+C，整個腳本會在此中斷回傳非 0 狀態，Task 就會停止
+          gum confirm "正在執行卸載，是否要連同資料庫 (SQLite) 緩存一併清除？" \
+            --affirmative "清除並卸載" \
+            --negative "僅卸載服務" || true
+          
+
+          GUM_RESULT=$?
+
+          # 2. 卸載
+          if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+            sudo /usr/local/bin/k3s-uninstall.sh
+          else
+            echo "❌ 找不到卸載腳本"
+          fi
+          # 3. 深度清理
+          if [ $GUM_RESULT -eq 0 ]; then
+              sudo rm -rf /var/lib/rancher/k3s
+              sudo rm -rf /etc/rancher/k3s
+              printf "%b $CHECK_MARK 已清理 K3s datastore 與設定，$RED_BANG 請必定要進行wsl --shutdown 在進行k3s的重新安裝\n"
+          else
+              echo "ℹ️ 跳過深度清理"
+          fi

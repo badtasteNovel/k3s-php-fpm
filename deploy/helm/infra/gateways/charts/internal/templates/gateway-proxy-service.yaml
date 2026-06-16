@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-gateway-proxy  # 名稱跟你在 Ingress 裡寫的一樣
+  namespace:  {{ .Release.Namespace | quote }} 
+  labels:
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: nginx-service.web.svc.cluster.local.
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP

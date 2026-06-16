@@ -1,0 +1,14 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-startup-backup
+  namespace: web # <--- 這裡指定門牌號碼
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 60
+  {{ include "db-backup.podTemplate" . | nindent 2 }}

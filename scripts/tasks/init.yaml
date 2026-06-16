@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+vars:
+  REGISTRY_SCRIPT: "./scripts/bin/docker-registry.sh"
+
+tasks:
+  local-registry:
+    desc: "部署並檢查本地 Docker Registry"
+    cmds:
+      - "bash {{.REGISTRY_SCRIPT}} setup"
+    status:
+      - "bash {{.REGISTRY_SCRIPT}} check"
+  uninstall-registry:
+    desc: "移除本地 Docker Registry"
+    cmds:
+      - "bash {{.REGISTRY_SCRIPT}} uninstall"
+  registry-gui:
+    desc: "部署 Registry 可視化管理界面 (GUI)"
+    cmds:
+      - "bash {{.REGISTRY_SCRIPT}} gui"
+  uninstall-gui:
+    desc: "移除 Registry GUI"
+    cmds:
+      - "bash {{.REGISTRY_SCRIPT}} uninstall-gui"
+
+  git-server:
+    desc: "設定本機連線 Forgejo（hosts + git SSL）"
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        SERVER_IP=$(gum input --placeholder "請輸入主機 IPv4 位址" --prompt "🌐 主機 IP: ")
+        [ -z "$SERVER_IP" ] && echo "❌ 未輸入 IP" && exit 1
+        if grep -q "forgejo.local" /etc/hosts; then
+          sudo sed -i "s|.*forgejo.local|$SERVER_IP forgejo.local|" /etc/hosts
+        else
+          echo "$SERVER_IP forgejo.local" | sudo tee -a /etc/hosts > /dev/null
+        fi
+        echo "✅ /etc/hosts 已設定 forgejo.local → $SERVER_IP"
+        git config --global http.https://forgejo.local/.sslVerify false
+        echo "✅ git SSL 驗證已關閉（僅限 forgejo.local）"

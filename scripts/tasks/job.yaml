@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+
+  create-clean-k3s-image:
+    desc: "手動觸發 k3s-image-cleaner CronJob（清理 node 上超過 7 天未使用的 container image）"
+    silent: true
+    cmds:
+      - kubectl create job --from=cronjob/k3s-image-cleaner image-cleaner -n kube-system
+
+  create-clean-registry:
+    desc: "手動觸發 registry-cleaner CronJob（scale down registry → GC → scale up）"
+    silent: true
+    cmds:
+      - kubectl create job --from=cronjob/registry-cleaner registry-cleaner -n default

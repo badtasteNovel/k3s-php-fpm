@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    io.kompose.service: dapr-workflow-database
+    
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: dapr-workflow-database
+  namespace: {{ .Release.Namespace | quote }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  ports:
+    - name: "database-port"
+      port: 5432       # Service 供內部使用的埠號
+      targetPort: 5432 
+  selector:
+    io.kompose.service: dapr-workflow-database

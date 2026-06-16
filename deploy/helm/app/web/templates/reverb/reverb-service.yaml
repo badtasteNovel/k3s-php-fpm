@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    io.kompose.service: reverb
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: php-reverb
+  namespace: web # <--- 這裡指定門牌號碼
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  selector:
+    io.kompose.service: reverb
+  ports:
+    - protocol: TCP
+      port: 8080            # 其他 Pod 訪問 php-reverb 時用的 Port
+      targetPort: 8080      # Reverb 容器內實際聽的 Port
+

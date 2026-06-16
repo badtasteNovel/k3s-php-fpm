@@ -1,0 +1,12 @@
+forgejo-runner:
+  knownLastVersion: true
+  runner:
+    config:
+      create: true
+      file:
+        runner:
+          capacity: 1
+          envs: {}
+          labels: []
+        cache:
+          enabled: false

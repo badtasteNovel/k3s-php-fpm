@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cilium
+description: Wrapper chart for cilium — pulls chart from OCI
+type: application
+version: 0.1.0
+appVersion: "1.19.1"
+dependencies:
+  - name: cilium
+    version: "1.19.1"
+    repository: "oci://quay.io/cilium/charts"

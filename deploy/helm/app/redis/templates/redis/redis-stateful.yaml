@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: StatefulSet # 1. 改為 StatefulSet
+metadata:
+  labels:
+    io.kompose.service: redis
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: redis
+  namespace: web
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  serviceName: "redis" # 2. 必須指定 Service 名稱
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.network/web-redis-network: "true"
+      io.kompose.service: redis
+  template:
+    metadata:
+      labels:
+        io.kompose.network/web-redis-network: "true"
+        io.kompose.service: redis
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+          - name: redis
+            image: redis:7.2-alpine
+            imagePullPolicy: IfNotPresent
+            envFrom:
+              - secretRef:
+                  name: app-env-secret
+            env:
+              - name: TZ
+                value: Asia/Taipei
+            args:
+              - redis-server
+              - --requirepass
+              - "$(REDIS_PASSWORD)"
+              - --maxmemory
+              - 1gb
+              - --maxmemory-policy
+              - allkeys-lru
+              - --appendonly
+              - "yes"
+            # 3. 修正資源設定：Limit 必須大於或等於 Request
+            resources:
+              requests:
+                cpu: {{ .Values.service.resources.requests.cpu | default "100m" | quote }}
+                memory: {{ .Values.service.resources.requests.memory | default "256Mi" | quote }} 
+              limits:
+                cpu: {{ .Values.service.resources.limits.cpu | default "200m" | quote }} 
+                memory: {{ .Values.service.resources.limits.memory | default "1Gi" | quote }}
+            volumeMounts:
+              - mountPath: /data
+                name: redis-data # 對應下方的 volumeClaimTemplates
+      restartPolicy: Always
+
+  # --- 4. 關鍵：Redis 專屬的持久化磁碟模板 ---
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: {{ .Values.service.storageClass | default "local-path" }}
+      resources:
+        requests:
+          ephemeral-storage: "100Mi"
+          storage: {{ .Values.data.resources.requests.storage | default "1Gi"}}
+        limits:
+          ephemeral-storage: "5Gi" # 

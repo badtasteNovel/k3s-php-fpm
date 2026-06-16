@@ -1,0 +1,27 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: web-app-certs
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+spec:
+  secretName: web-app-certs
+  issuerRef:
+    name: local-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - lg-laravel.local
+    - sql.local
+    - sureway.local
+    - portainer.local
+    - grafana.local
+    - temporal.local
+    - forgejo.local
+    - argo.local
+    - registry.local
+    - registry-ui.local
+    - pulse.local
+    - pulse.test

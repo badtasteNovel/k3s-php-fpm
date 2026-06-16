@@ -1,0 +1,96 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: registry-cleaner
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ printf "0 %d * * %d" (int .Values.registryCleaner.hour) (int .Values.registryCleaner.dayOfWeek) | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: registry-cleaner
+        spec:
+          serviceAccountName: registry-cleaner
+          imagePullSecrets:
+            - name: local-registry-auth
+          initContainers:
+            {{- if .Values.registryCleaner.imageCleanup.enabled }}
+            - name: image-cleanup
+              image: {{ .Values.registryCleaner.imageCleanupImage.repository }}:{{ .Values.registryCleaner.imageCleanupImage.tag }}
+              command: ["/bin/sh", "/scripts/image-cleanup.sh"]
+              resources:
+                {{- toYaml .Values.registryCleaner.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: registry-ca
+                  mountPath: /certs
+                - name: registry-cleaner-ssh-key
+                  mountPath: /ssh
+                  readOnly: true
+                - name: registry-auth
+                  mountPath: /registry-auth
+                  readOnly: true
+            {{- end }}
+            - name: scale-down
+              image: {{ .Values.registryCleaner.kubectlImage.repository }}:{{ .Values.registryCleaner.kubectlImage.tag }}
+              command: ["/bin/sh", "/scripts/scale-down.sh"]
+              resources:
+                {{- toYaml .Values.registryCleaner.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+            - name: clean
+              image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+              command: ["/bin/sh", "/scripts/clean.sh"]
+              resources:
+                {{- toYaml .Values.registryCleaner.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: registry-data
+                  mountPath: /var/lib/registry
+                - name: registry-config
+                  mountPath: /etc/docker/registry/config.yml
+                  subPath: config.yml
+          containers:
+            - name: scale-up
+              image: {{ .Values.registryCleaner.kubectlImage.repository }}:{{ .Values.registryCleaner.kubectlImage.tag }}
+              command: ["/bin/sh", "/scripts/scale-up.sh"]
+              resources:
+                {{- toYaml .Values.registryCleaner.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+          volumes:
+            - name: scripts
+              configMap:
+                name: registry-cleaner-script
+                defaultMode: 0755
+            - name: registry-data
+              persistentVolumeClaim:
+                claimName: {{ .Values.registryCleaner.pvcName }}
+            - name: registry-config
+              configMap:
+                name: local-registry-config
+                items:
+                  - key: config.yml
+                    path: config.yml
+            - name: registry-ca
+              secret:
+                secretName: registry-ca
+            - name: registry-cleaner-ssh-key
+              secret:
+                secretName: registry-cleaner-ssh-key
+            - name: registry-auth
+              secret:
+                secretName: local-registry-auth
+                items:
+                  - key: .dockerconfigjson
+                    path: config.json
+          restartPolicy: OnFailure

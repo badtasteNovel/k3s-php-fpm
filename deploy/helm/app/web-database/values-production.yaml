@@ -1,0 +1,12 @@
+sql:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+database: # 資料庫的大小
+  storage: 20Gi
+  innodb_aio: 1
+  max_connections: 1000

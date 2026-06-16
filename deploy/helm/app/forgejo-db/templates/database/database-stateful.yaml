@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    io.kompose.network/forgejo-network: "true"
+    io.kompose.service: forgejo-database
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: forgejo-database
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  serviceName: "forgejo-database"
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.network/forgejo-network: "true"
+      io.kompose.service: forgejo-database
+  template:
+    metadata:
+      labels:
+        io.kompose.network/forgejo-network: "true"
+        io.kompose.service: forgejo-database
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+        - name: postgres-db
+          image: postgres:17-alpine
+          args: ["-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+          envFrom:
+            - secretRef:
+                name: forgejo-db-secret
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: TZ
+              value: Asia/Taipei
+          resources:
+            requests:
+              cpu: {{ .Values.sql.resources.requests.cpu | default "100m" }}
+              memory: {{ .Values.sql.resources.requests.memory | default "256Mi" }}
+            limits:
+              cpu: {{ .Values.sql.resources.limits.cpu | default "500m" }}
+              memory: {{ .Values.sql.resources.limits.memory | default "512Mi" }}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: forgejo-database-data
+            - mountPath: /docker-entrypoint-initdb.d/setup.sh
+              name: forgejo-database-config
+              subPath: setup.sh
+              readOnly: true
+            - name: forgejo-database-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+              readOnly: true
+            - name: forgejo-database-config
+              mountPath: /etc/postgresql/pg_hba.conf
+              subPath: pg_hba.conf
+              readOnly: true
+      volumes:
+        - name: forgejo-database-config
+          configMap:
+            name: forgejo-database-config
+
+  volumeClaimTemplates:
+  - metadata:
+      name: forgejo-database-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path"
+      resources:
+        requests:
+          storage: {{ .Values.database.storage | default "5Gi" }}

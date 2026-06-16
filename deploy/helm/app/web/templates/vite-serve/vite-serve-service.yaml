@@ -1,0 +1,19 @@
+{{- if .Values.vite_serve.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: vite-serve-service
+  namespace: web # <--- 這裡指定門牌號碼
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    io.kompose.service: vite-serve
+  ports:
+    - protocol: TCP
+      port: 5173
+      targetPort: 5173
+{{- end }}

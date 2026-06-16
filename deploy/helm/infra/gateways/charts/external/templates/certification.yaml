@@ -1,0 +1,8 @@
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: {{ .Release.Namespace | quote }} # 確保跟你的 Certificate 在同一個 Namespace (即 Traefik 所在之處)
+spec:
+  defaultCertificate:
+    secretName: web-app-certs # 關鍵：對應你 Certificate 設定的 secretName

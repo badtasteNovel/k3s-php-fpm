@@ -1,0 +1,48 @@
+forgejo-runner:
+  runner:
+    config:
+      existingInitSecret: forgejo-runner-secret
+      file:
+        runner:
+          instanceURL: "http://forgejo-http.forgejo.svc.cluster.local:3000"
+          capacity: 1
+          labels:
+            - "linux"
+            - "self-hosted"
+            - "ubuntu"
+          envs:
+            DOCKER_HOST: tcp://127.0.0.1:2376
+            DOCKER_TLS_VERIFY: "1"
+            DOCKER_CERT_PATH: /certs/client
+        container:
+          network: host
+          options: -v /certs/client:/certs/client -v /secrets/app-env:/secrets/app-env:ro -v /etc/docker/certs.d:/etc/docker/certs.d:ro -v /root/.docker/config.json:/root/.docker/config.json:ro
+          valid_volumes:
+            - /certs/client
+            - /secrets/app-env
+            - /etc/docker/certs.d
+            - /root/.docker/config.json
+
+  volumes:
+    - name: registry-ca
+      secret:
+        secretName: registry-ca
+    - name: app-env-secret
+      secret:
+        secretName: app-env-secret
+    - name: local-registry-auth
+      secret:
+        secretName: local-registry-auth
+
+  volumeMounts:
+    - name: app-env-secret
+      mountPath: /secrets/app-env
+      readOnly: true
+    - name: registry-ca
+      mountPath: /etc/docker/certs.d/registry.local/ca.crt
+      subPath: ca.crt
+      readOnly: true
+    - name: local-registry-auth
+      mountPath: /root/.docker/config.json
+      subPath: config.json
+      readOnly: true

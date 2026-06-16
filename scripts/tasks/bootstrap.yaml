@@ -1,0 +1,362 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+vars:
+  NETPOL_RENDERER: |
+    #!/bin/bash
+    set -euo pipefail
+    if [ -d /dev/shm ]; then TMP=$(mktemp -d /dev/shm/tmp-XXXXXX); else TMP=$(mktemp -d); fi
+    trap "rm -rf $TMP" EXIT
+    cat > "$TMP/helm.yaml"
+    cat "$TMP/helm.yaml"
+    echo "---"
+    cat /tmp/helm-netpol.yaml
+    rm -f /tmp/netpol-render.sh /tmp/helm-netpol.yaml
+
+tasks:
+  default:
+    desc: "部屬"
+    silent: true
+    cmds:
+      - kubectl apply -k deploy/k8s/base
+      - task: network
+      - task: cert
+      - task: ingress
+      - task trust:registry
+      - task: forgejo
+      - task: ci-runner
+      - task secret:registry-auth
+      - task: git-ops
+      - task manual:registry-login
+      - task: push-static-images
+      - task: registry-auth
+      - task: pluse
+  registry-auth:
+    desc: "🔑 patch default serviceaccount 讓 web/service namespace 自動帶 imagePullSecrets"
+    silent: true
+    cmds:
+      - |
+        PULL_SECRET="local-registry-auth"
+        for NS in web service; do
+          kubectl patch serviceaccount default -n "$NS" \
+            -p "{\"imagePullSecrets\": [{\"name\": \"${PULL_SECRET}\"}]}" 2>/dev/null \
+            && echo "✅ default serviceaccount ($NS): imagePullSecrets 已設定" \
+            || echo "⚠️  serviceaccount patch ($NS): namespace 不存在，跳過"
+        done
+
+  app:
+    desc: "📦 直接 Helm 部署應用，production values（不透過 ArgoCD）"
+    silent: true
+    cmds:
+      - helm upgrade --install web-database ./deploy/helm/app/web-database
+          --namespace web
+          --values deploy/helm/app/web-database/values-production.yaml
+      - helm upgrade --install redis ./deploy/helm/app/redis
+          --namespace web
+          --values deploy/helm/app/redis/values-production.yaml
+      - helm upgrade --install web ./deploy/helm/app/web
+          --namespace web
+          --values deploy/helm/app/web/values-production.yaml
+      - helm upgrade --install workflow-database ./deploy/helm/app/workflow-database
+          --namespace service
+          --values deploy/helm/app/workflow-database/values-production.yaml
+      - helm upgrade --install service ./deploy/helm/app/services
+          --namespace service
+          --values deploy/helm/app/services/values-production.yaml
+      - |
+        DB_USER="$(grep '^TEMPORAL_DB_USER=' environment/.env | cut -d'=' -f2-)"
+        helm upgrade --install temporal temporal \
+          --repo https://go.temporal.io/helm-charts \
+          --version 0.73.2 \
+          --namespace service \
+          --values deploy/values/temporal/values.yaml \
+          --values deploy/values/temporal/values-production.yaml \
+          --set "server.config.persistence.default.sql.user=$DB_USER" \
+          --set "server.config.persistence.visibility.sql.user=$DB_USER"
+
+
+  pulse:
+    desc: "📊 部署 monitor 監控基礎設施（pulse-redis、monitor-postgresql）"
+    silent: true
+    cmds:
+      - helm upgrade --install pulse-redis ./deploy/helm/app/pulse-redis
+          --namespace monitor
+          --create-namespace
+          --values deploy/helm/app/pulse-redis/values-production.yaml
+      - helm upgrade --install monitor-postgresql ./deploy/helm/app/monitor-postgresql
+          --namespace monitor
+          --create-namespace
+          --values deploy/helm/app/monitor-postgresql/values-production.yaml
+
+  network:
+    desc: "🌐 部署網路基礎（Cilium 必須最先啟動，因為 kube-proxy 已移除）"
+    silent: true
+    cmds:
+      - kubectl apply -k deploy/k8s/base
+      - helm dependency update ./deploy/helm/infra/cilium
+      - helm upgrade --install cilium ./deploy/helm/infra/cilium
+          --namespace kube-system
+          --values deploy/helm/infra/cilium/values-production.yaml
+          --wait --timeout 900s
+      - helm repo add csi-driver-smb https://raw.githubusercontent.com/kubernetes-csi/csi-driver-smb/master/charts
+      - helm upgrade --install csi-driver-smb csi-driver-smb/csi-driver-smb
+          --version 1.20.0
+          --namespace kube-system
+          --wait
+      - helm upgrade --install node-local-dns oci://ghcr.io/deliveryhero/helm-charts/node-local-dns
+          --version 2.1.0
+          --namespace kube-system
+          --set config.bindIp=169.254.20.10
+          --set config.localDns=169.254.20.10
+          --set config.dnsServer=10.43.0.10
+          --set config.noIPv6Lookups=true
+
+  ingress:
+    desc: "🔀 初始化 Traefik（external / internal gateway）"
+    silent: true
+    cmds:
+      - helm dependency update ./deploy/helm/infra/gateways/charts/common
+      - helm dependency update ./deploy/helm/infra/gateways/charts/external
+      - helm dependency update ./deploy/helm/infra/gateways/charts/internal
+      - helm upgrade --install external-gateway ./deploy/helm/infra/gateways/charts/external
+          --namespace gateway
+          --create-namespace
+          --values deploy/helm/infra/gateways/charts/external/values.yaml
+          --values deploy/helm/infra/gateways/charts/external/values-production.yaml
+      - helm upgrade --install internal-gateway ./deploy/helm/infra/gateways/charts/internal
+          --namespace internal-gateway
+          --create-namespace
+          --values deploy/helm/infra/gateways/charts/internal/values.yaml
+          --values deploy/helm/infra/gateways/charts/internal/values-production.yaml
+
+  forgejo:
+    desc: "🦊 部署 Forgejo（ArgoCD bootstrap 的前置條件）"
+    silent: true
+    preconditions:
+      - sh: kubectl get pv nas-forgejo-git-backup
+        msg: "PersistentVolume 'nas-forgejo-git-backup' 不存在，請先建立 NAS PV 再執行"
+    cmds:
+      - kubectl apply -k deploy/k8s/base
+      - helm upgrade --install forgejo-db ./deploy/helm/app/forgejo-db
+          --namespace forgejo
+          --values deploy/helm/app/forgejo-db/values-production.yaml
+      - |
+        cat > /tmp/helm-netpol.yaml << 'NETPOL'
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: forgejo-ingress
+          namespace: forgejo
+        spec:
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: forgejo
+          policyTypes:
+            - Ingress
+          ingress:
+            - from:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: internal-gateway
+                  podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: traefik
+              ports:
+                - protocol: TCP
+                  port: 3000
+            - from:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: argocd
+                  podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: argocd-repo-server
+              ports:
+                - protocol: TCP
+                  port: 3000
+            - from:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: argocd
+                  podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: argocd-image-updater
+              ports:
+                - protocol: TCP
+                  port: 2222
+            - from:
+                - podSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: forgejo-runner
+              ports:
+                - protocol: TCP
+                  port: 3000
+            - from:
+                - namespaceSelector:
+                    matchLabels:
+                      kubernetes.io/metadata.name: default
+                  podSelector:
+                    matchLabels:
+                      app: registry-cleaner
+              ports:
+                - protocol: TCP
+                  port: 2222
+        NETPOL
+        cat > /tmp/netpol-render.sh << 'EOF'
+        {{.NETPOL_RENDERER}}
+        EOF
+        chmod +x /tmp/netpol-render.sh
+        helm upgrade --install forgejo oci://codeberg.org/forgejo-contrib/forgejo \
+          --version 15.0.2 \
+          --namespace forgejo \
+          --values deploy/values/forgejo/values.yaml \
+          --values deploy/values/forgejo/values-production.yaml \
+          --post-renderer /tmp/netpol-render.sh
+
+  ci-runner:
+    desc: "🤖 部署 Forgejo Runner（需先從 Forgejo UI 取得 token 建立 forgejo-runner-secret）"
+    silent: true
+    vars:
+      ENV: ./environment/.env
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        [ -z "$USERNAME" ] && echo "❌ REGISTRY_USERNAME 未設定" && exit 1
+        [ -z "$PASSWORD" ] && echo "❌ REGISTRY_PASSWORD 未設定" && exit 1
+        AUTH=$(printf '%s:%s' "$USERNAME" "$PASSWORD" | base64 -w 0)
+        CONFIG=$(printf '{"auths":{"registry.local":{"auth":"%s"}}}' "$AUTH")
+        kubectl create secret generic local-registry-auth \
+          --from-literal=config.json="$CONFIG" \
+          -n forgejo \
+          --dry-run=client -o yaml | kubectl apply -f -
+      - helm dependency update ./deploy/helm/infra/forgejo-runner
+      - |
+        cat > /tmp/forgejo-post-render.sh << 'POSTRENDER'
+        #!/bin/bash
+        set -euo pipefail
+        if [ -d /dev/shm ]; then TMP_DIR=$(mktemp -d /dev/shm/tmp-XXXXXX); else TMP_DIR=$(mktemp -d); fi
+        trap "rm -rf ${TMP_DIR}" EXIT
+        cat > "${TMP_DIR}/helm-output.yaml"
+        cat > "${TMP_DIR}/patch.yaml" << 'PATCH'
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: forgejo-runner
+        spec:
+          template:
+            spec:
+              containers:
+                - name: runner
+                  volumeMounts:
+                    - name: local-registry-auth
+                      mountPath: /data/.docker/config.json
+                      subPath: config.json
+                      readOnly: true
+        PATCH
+        cat > "${TMP_DIR}/kustomization.yaml" << 'KUST'
+        resources:
+          - helm-output.yaml
+        patches:
+          - path: patch.yaml
+            target:
+              kind: Deployment
+              name: forgejo-runner
+        KUST
+        kubectl kustomize "${TMP_DIR}"
+        POSTRENDER
+        chmod +x /tmp/forgejo-post-render.sh
+        helm upgrade --install forgejo-runner ./deploy/helm/infra/forgejo-runner \
+          --namespace forgejo \
+          --values deploy/helm/infra/forgejo-runner/values.yaml \
+          --values deploy/helm/infra/forgejo-runner/values-production.yaml \
+          --post-renderer /tmp/forgejo-post-render.sh
+
+  push-static-images:
+    desc: "🛠️ 建置 CI 所需 image 並推至 local registry（my-php-base、my-ops-toolbox、my-ci-runner、my-image-cleaner、my-kubectl）"
+    silent: true
+    cmds:
+      - |
+        docker image inspect my-php-base:8.4 > /dev/null 2>&1 \
+          && echo "✅ my-php-base:8.4 已存在，跳過建置" \
+          || docker build -f docker/web/app/php-fpm/base.Dockerfile -t my-php-base:8.4 .
+      - |
+        docker image inspect my-image-cleaner:latest > /dev/null 2>&1 \
+          && echo "✅ my-image-cleaner 已存在，跳過建置" \
+          || docker build --platform linux/amd64 -f docker/ops/registry-clean.Dockerfile -t my-image-cleaner:latest .
+      - |
+        docker image inspect my-ops-toolbox:latest > /dev/null 2>&1 \
+          && echo "✅ my-ops-toolbox:latest 已存在，跳過建置" \
+          || docker build -f docker/ops/toolbox.Dockerfile -t my-ops-toolbox:latest .
+      - |
+        docker image inspect my-ci-runner:latest > /dev/null 2>&1 \
+          && echo "✅ my-ci-runner:latest 已存在，跳過建置" \
+          || docker build -f docker/ops/ci-runner.Dockerfile -t my-ci-runner:latest .
+      - |
+        docker image inspect my-kubectl:latest > /dev/null 2>&1 \
+          && echo "✅ my-kubectl:latest 已存在，跳過建置" \
+          || docker build --platform linux/amd64 -f docker/ops/kubectl.Dockerfile -t my-kubectl:latest .
+      - |
+        for image in \
+          "my-php-base:8.4" \
+          "my-ops-toolbox:latest" \
+          "my-ci-runner:latest" \
+          "my-image-cleaner:latest" \
+          "my-kubectl:latest"; do
+          name="${image%%:*}"
+          tag="${image##*:}"
+          docker tag ${image} registry.local/${name}:${tag}
+          docker push registry.local/${name}:${tag}
+        done
+
+
+  cert:
+    desc: "🔐 部署 cert-manager 及 local CA issuer"
+    silent: true
+    cmds:
+      - helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager
+          --version v1.20.1
+          --namespace cert-manager
+          --create-namespace
+          --set crds.enabled=true
+          --wait
+      - kubectl wait --for=condition=Available deployment/cert-manager-webhook
+          --namespace cert-manager --timeout=120s
+      - helm upgrade --install cert-issue ./deploy/helm/infra/cert-manager
+          --namespace cert-manager
+
+
+
+  registry:
+    desc: "🗂️ 部署 local registry（local-registry、k3s-maintenance）"
+    silent: true
+    cmds:
+      - helm upgrade --install local-registry ./deploy/helm/infra/local-registry
+          --namespace default
+          --values deploy/helm/infra/local-registry/values.yaml
+          --values deploy/helm/infra/local-registry/values-production.yaml
+      - helm upgrade --install k3s-maintenance ./deploy/helm/infra/k3s-maintenance
+          --namespace kube-system
+          --values deploy/helm/infra/k3s-maintenance/values.yaml
+          --values deploy/helm/infra/k3s-maintenance/values-production.yaml
+      - kubectl apply -k deploy/k8s/base
+
+  git-ops:
+    desc: "🏗️ 部署 GitOps 基礎設施（cert-manager、local-registry、k3s-maintenance、ArgoCD）"
+    silent: true
+    cmds:
+      - task: registry
+      - helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd
+          --version 7.8.26
+          --namespace argocd
+          --values deploy/values/argocd/values.yaml
+          --wait
+      - helm upgrade --install argocd-image-updater argocd-image-updater
+          --repo https://argoproj.github.io/argo-helm
+          --namespace argocd
+          --values deploy/values/argocd-image-updater/values.yaml
+          --wait
+      - helm upgrade --install argocd-apps ./deploy/helm/infra/argocd-apps
+          --namespace argocd
+          --wait

@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    io.kompose.network/php-app-network: "true"
+    io.kompose.network/web-redis-network: "true"
+    io.kompose.network/web-app-network: "true"
+    io.kompose.service: nginx
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: php-fpm-nginx
+  namespace: web # <--- 這裡指定門牌號碼
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.php_fpm.replica | default 1 }}
+  selector:
+    matchLabels:
+      io.kompose.network/php-app-network: "true"
+      io.kompose.network/web-redis-network: "true"
+      io.kompose.network/web-app-network: "true"
+      io.kompose.service: nginx
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        io.kompose.network/php-app-network: "true"
+        io.kompose.network/web-redis-network: "true"
+        io.kompose.network/web-app-network: "true"
+        io.kompose.service: nginx
+      annotations:
+        rollout-timestamp: {{ now | quote }}
+        dapr.io/enabled: "true"           # 開啟 sidecar 注入
+        dapr.io/app-id: "laravel-app"     # 這個 app 的名稱
+        dapr.io/app-port: "9000"          # php-fpm 的 port
+        dapr.io/log-level: "info"
+    spec:
+      enableServiceLinks: false  # 告訴 K8s：別再塞這些沒用的變數給我了
+      dnsConfig:
+        options:
+          - name: single-request-reopen
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane # 這裡是node的標籤(包含 control-plane 化名 server 以及 node 化名 kubelet或agent)
+                operator: DoesNotExist
+      {{- end }}
+      # 掛載之後要修一下權限 具體修復過程看一下映像檔案的建置過程。
+      {{- if .Values.development.mount }}
+      initContainers:
+        - name: mount-path
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:33 /var/www/html/storage /var/www/html/bootstrap/cache && find /var/www/html/storage /var/www/html/bootstrap/cache -type d -exec chmod 775 {} + && find /var/www/html/storage /var/www/html/bootstrap/cache -type f -exec chmod 664 {} +"]
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+      {{- end }}
+      containers:
+          - name: php-fpm
+            securityContext:
+            {{- if .Values.development.runAsRoot }}
+              runAsUser: 0
+              runAsGroup: 0
+              runAsNonRoot: false       # 關閉「禁止 root」的檢查門禁
+              allowPrivilegeEscalation: true  # 允許程序取得比父程序更高的權限
+              capabilities:
+                add:
+                  - "SYS_PTRACE"  # 只有在 enableDebug 為 true 時才會注入
+            {{- else }}
+              # --- 生產模式：回歸安全的 www-data (假設 UID 1000) ---
+              runAsUser: 33
+              runAsGroup: 33
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+            {{- end }}
+            envFrom:
+              - secretRef:
+                  name: app-env-secret
+            env:
+              - name: TZ
+                value: Asia/Taipei
+            image: {{ printf "%s:%s" (.Values.php_image.repository | default "registry.local/my-php-release") (.Values.php_image.tag | default "debian-bookworm") | quote }}
+            imagePullPolicy: Always
+            ports:
+              - containerPort: 9000
+            livenessProbe:
+              tcpSocket:
+                port: 9000
+              initialDelaySeconds: 30
+              periodSeconds: 30
+              failureThreshold: 3
+            readinessProbe:
+              tcpSocket:
+                port: 9000
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              failureThreshold: 3
+            resources:
+              requests:
+                ephemeral-storage: "1Gi"
+                cpu: {{ .Values.php_fpm.resources.requests.cpu | default "100m"}}
+                memory: {{ .Values.php_fpm.resources.requests.memory | default "256Mi"}}
+              limits:
+                ephemeral-storage: "10Gi"
+                cpu: {{ .Values.php_fpm.resources.limits.cpu | default "500m"}}
+                memory: {{ .Values.php_fpm.resources.limits.memory | default "512Mi"}}
+            workingDir: /var/www/html
+            {{- if .Values.development.mount }}
+            volumeMounts:
+              - name: code
+                mountPath: /var/www/html
+
+            {{- end }}
+          - name: nginx-sidecar
+            env:
+              - name: TZ
+                value: Asia/Taipei
+          
+            image: {{ printf "%s:%s" (.Values.nginx_image.repository | default "registry.local/my-inner-unprivileged-nginx") (.Values.nginx_image.tag | default "alpine") | quote }}
+            imagePullPolicy: Always
+            ports:
+              - containerPort: 80
+            resources:
+              limits:
+                ephemeral-storage: "10Gi"
+                cpu: {{ .Values.nginx.resources.limits.cpu | default "200m" | quote }}        # 生產模式允許最高用到 1 核(1000m)，應付突發流量
+                memory: {{ .Values.nginx.resources.limits.memory | default "128Mi" | quote }}  
+              requests:
+                ephemeral-storage: "1Gi"
+                cpu: {{ .Values.nginx.resources.requests.cpu | default "50m" | quote }}          
+                memory: {{ .Values.nginx.resources.requests.memory | default "64Mi" | quote }}  
+            volumeMounts:
+              - name: nginx-default-configuration
+                mountPath: /etc/nginx/conf.d/zz-default.conf
+                subPath: zz-default.conf # 這是 ConfigMap 裡的 Key
+                readOnly: true
+              - name: qztray-secret
+                mountPath: /var/www/html/storage/app/qztray-public
+                subPath: cert.pem
+                readOnly: true
+              - name: qztray-secret
+                mountPath: /var/www/html/storage/app/qztray-private
+                subPath: key.pem
+                readOnly: true
+      restartPolicy: Always
+      volumes:
+        - name: nginx-default-configuration
+          configMap:
+            name: nginx-default-configuration
+        - name: qztray-secret
+          secret:
+            secretName: qztray-secret
+        {{- if .Values.development.mount }}
+        - name: code
+          hostPath:
+            path: {{ .Values.development.mountPath }}
+            type: Directory
+        {{- end }}

@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: forgejo-database-backup
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    io.kompose.service: forgejo-database-backup
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 60
+      {{ include "db-backup.podTemplate" . | nindent 6 }}

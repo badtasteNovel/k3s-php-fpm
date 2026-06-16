@@ -1,0 +1,62 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: internal-gateway
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    tier: gateway
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      internal-gateway-internal-body-size@kubernetescrd
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+spec:
+  ingressClassName: internal-traefik
+  rules:
+  - host: sureway.local
+    http:
+      paths: &web_path
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: internal-gateway-proxy
+            port:
+              number: 80
+  - host: lg-laravel.local
+    http:
+      paths: *web_path
+  - host: {{ .Values.pulse.hostname }}
+    http:
+      paths: *web_path
+  - host: grafana.local
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: grafana-gateway-proxy
+              port:
+                number: 80
+  - host: forgejo.local
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: forgejo-gateway-proxy
+              port:
+                number: 3000
+  - host: argo.local
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: argocd-gateway-proxy
+              port:
+                number: 80

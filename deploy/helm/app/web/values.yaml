@@ -1,0 +1,72 @@
+postgre_database: # 資料庫的大小
+  storage: 1Gi
+  innodb_aio: 1
+  max_connections: 100
+database_backup:
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "500Mi"
+      storage: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+      storage: 10Gi
+postgre_sql: # 資料庫本身運行的資源
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+  
+nginx:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+  config:
+    buffer:
+      size: "128k"
+      number: 4
+      per_buffer: "256k"
+      busy_size: "256k"
+php_fpm:
+  replica: 1
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+
+vite_serve:
+  enabled: true
+portainer:
+  enabled: true
+
+podSecurityContext:
+  enabled: false
+development:
+  enabled: false
+  clearLogs: false
+  debug: false
+  runAsRoot: false
+  mount: false
+singleNode: true
+
+php_image:
+  repository: "registry.local/my-dev-php-fpm"
+  tag: "debian-bookworm"
+  pullPolicy: "Always"
+
+nginx_image:
+  repository: "registry.local/my-inner-unprivileged-nginx"
+  tag: "alpine"
+  pullPolicy: "Always"

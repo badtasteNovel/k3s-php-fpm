@@ -1,0 +1,65 @@
+cassandra:
+  enabled: false
+
+mysql:
+  enabled: false
+
+elasticsearch:
+  enabled: false
+# 底下的監控系統都不需要裝 之後安裝kube-prometheus-stack 進行全部的系統監控
+prometheus:
+  enabled: false
+
+grafana:
+  enabled: false
+
+additionalLabels: 
+  io.kompose.network/service-app-network: "true"
+
+server:
+  enabled: true
+  deploymentLabels:
+    io.kompose.network/service-app-network: "true"
+  podLabels:
+    io.kompose.network/service-app-network: "true"
+  config:
+    persistence:
+      default:
+        driver: "sql"
+        sql:
+          driver: "postgres12"
+          host: "dapr-workflow-database.service.svc.cluster.local"  # 你的 MySQL service name
+          port: 5432
+          database: "temporal"
+          maxConns: 20
+          maxIdleConns: 20
+          maxConnLifetime: "1h"
+          user: "temporal_user"  # <--- 這裡必須明確指定，不然它會用預設的 "temporal"
+          existingSecret: "workflow-database-secret"
+      visibility:
+        driver: "sql"
+        sql:
+          driver: "postgres12"
+          host: "dapr-workflow-database.service.svc.cluster.local"
+          port: 5432
+          database: "temporal_visibility"
+          user: "temporal_user"  # <--- 這裡必須明確指定，不然它會用預設的 "temporal"
+          existingSecret: "workflow-database-secret"
+          maxConns: 20
+          maxIdleConns: 20
+          maxConnLifetime: "1h"
+    namespaces:
+        create: true
+        namespaces:
+          - name: default  # <--- 加上這個，解決 RoadRunner 的報錯
+            retention: 5d
+schema:
+  podLabels:
+     io.kompose.network/service-app-network: "true"
+web: # ui
+  podLabels:
+     io.kompose.network/service-app-network: "true"
+  additionalEnv:
+    - name: TRUST_PROXY
+      value: "true"
+    

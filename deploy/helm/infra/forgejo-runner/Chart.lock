@@ -1,0 +1,6 @@
+dependencies:
+- name: forgejo-runner
+  repository: oci://codeberg.org/wrenix/helm-charts
+  version: 0.7.6
+digest: sha256:135bf38ec5bbcad74737ffb59979be904637986693df628b35542d729a35d313
+generated: "2026-06-09T15:01:00.919376878+08:00"

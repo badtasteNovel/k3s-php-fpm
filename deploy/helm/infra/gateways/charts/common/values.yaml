@@ -1,0 +1,35 @@
+traefik:
+  deployment:
+    dnsPolicy: "None"
+    dnsConfig:
+      nameservers:
+        - 169.254.20.10  # NodeLocal DNS 虛擬 IP
+      options:
+        - name: ndots
+          value: "1"
+  globalArguments:
+    - "--global.checknewversion=false"
+    - "--global.sendanonymoususage=false"
+  env:
+    - name: TZ
+      value: "Asia/Taipei"
+  providers:
+    kubernetesCRD:
+      enabled: true
+    kubernetesIngress:
+      allowExternalNameServices: true
+  ingressClass:
+    enabled: true
+    isDefaultClass: false
+  nodeSelector:
+    kubernetes.io/os: linux
+    node-role.kubernetes.io/control-plane: "true"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+      ephemeral-storage: "512Mi"
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+      ephemeral-storage: "5Gi"

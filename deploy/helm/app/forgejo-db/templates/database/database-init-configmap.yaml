@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-database-config
+  namespace: {{ .Release.Namespace | quote }}
+data:
+  # 注意：Key 必須是 .sh，Postgres 才會用 Shell 執行它
+  postgresql.conf: |
+    # --- 基礎連線 ---
+    max_connections = 100
+
+    # --- 效能大招：犧牲微秒級持久化 ---
+    synchronous_commit = off
+    wal_writer_delay = 200ms
+
+    # --- 磁碟與日誌管理 (對應你的 binlog 需求) ---
+    max_wal_size = 512MB
+    min_wal_size = 80MB
+    checkpoint_timeout = 5min  # 減少頻繁寫入磁碟的壓力
+
+    # --- 網路優化 ---
+    tcp_keepalives_idle = 60
+    tcp_keepalives_interval = 10
+    listen_addresses = '*'
+  pg_hba.conf: |
+    local     all     all                                     trust
+    host      all     all            127.0.0.1/32             scram-sha-256
+    host      all     all            10.42.0.0/16             scram-sha-256
+    host      all     all            10.43.0.0/16             scram-sha-256
+    host      all     all            10.0.0.0/24              scram-sha-256
+  setup.sh: |
+    #!/bin/bash
+    set -e
+
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+
+        DO \$$
+        BEGIN
+          IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = '${DB_BACKUP_USERNAME}') THEN
+            CREATE USER "${DB_BACKUP_USERNAME}" WITH PASSWORD '${DB_BACKUP_PASSWORD}';
+          END IF;
+        END
+        \$$;
+
+
+      GRANT pg_read_all_data TO "${DB_BACKUP_USERNAME}";
+
+      ALTER DATABASE "${POSTGRES_DB}" SET tcp_keepalives_idle = 60;
+
+    EOSQL

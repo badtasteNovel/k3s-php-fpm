@@ -1,0 +1,20 @@
+coreDnsCustom:
+  enabled: false
+  traefikService: external-gateway-traefik
+  traefikNamespace: gateway
+  localDomains: []
+
+imageCleaner:
+  schedule: "0 3 */3 * *"  # 每三天凌晨 3 點
+  daysOld: 7               # 刪除 7 天以上未使用的 image
+  image:
+    repository: alpine
+    tag: "3.19"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+

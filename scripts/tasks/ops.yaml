@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+tasks:
+  build:
+    desc: "📦 建置 my-ops-php image 並推至 local registry"
+    silent: true
+    cmds:
+      - |
+        REGISTRY="$(kubectl get nodes -o wide | awk 'NR>1 {print $6}' | head -n 1):30500"
+        for image in my-ops-toolbox:latest my-php-release:debian-bookworm; do
+          if docker pull ${REGISTRY}/${image%%:*}:${image##*:} > /dev/null 2>&1; then
+            docker tag ${REGISTRY}/${image%%:*}:${image##*:} ${image}
+            echo "✅ ${image} 從 registry 取得"
+          else
+            echo "❌ ${image} 不在 registry，請先執行 task bootstrap:ci-pod 並觸發一次 CI"
+            exit 1
+          fi
+        done
+        docker build -f docker/ops/ops.Dockerfile -t my-ops-php:latest .
+        docker tag my-ops-php:latest ${REGISTRY}/my-ops-php:latest
+        docker push ${REGISTRY}/my-ops-php:latest
+        echo "✅ my-ops-php:latest 已推至 registry"
+
+  shell:
+    desc: "🔧 啟動臨時維運 pod（exit 後自動刪除）"
+    interactive: true
+    cmds:
+      - defer: kubectl delete pod ops-shell -n ops --ignore-not-found --wait=false
+      - kubectl create namespace ops --dry-run=client -o yaml | kubectl apply -f -
+      - kubectl delete pod ops-shell -n ops --ignore-not-found --wait=true
+      - PROJECT_PATH=$(pwd) envsubst < deploy/ops/ops-shell-pod.yaml | kubectl apply -f -
+      - kubectl wait --for=condition=Ready pod/ops-shell -n ops --timeout=60s
+      - kubectl attach -it -n ops ops-shell -c ops-shell

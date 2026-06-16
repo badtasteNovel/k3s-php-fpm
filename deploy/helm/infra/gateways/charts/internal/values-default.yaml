@@ -1,0 +1,9 @@
+pulse:
+  hostname: pulse.test
+
+common:
+  traefik:
+    ports:
+      websecure:
+        expose:
+          default: false

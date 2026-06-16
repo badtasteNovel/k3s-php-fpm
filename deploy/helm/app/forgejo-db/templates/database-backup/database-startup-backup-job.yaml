@@ -1,0 +1,12 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-startup-backup
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: 60
+  {{ include "db-backup.podTemplate" . | nindent 2 }}

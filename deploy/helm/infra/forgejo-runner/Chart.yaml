@@ -1,0 +1,10 @@
+apiVersion: v2
+name: forgejo-runner
+description: Forgejo CI Runner wrapper（含 local CA Certificate）
+type: application
+version: 0.1.0
+appVersion: "0.7.6"
+dependencies:
+  - name: forgejo-runner
+    version: "0.7.6"
+    repository: "oci://codeberg.org/wrenix/helm-charts"

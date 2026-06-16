@@ -1,0 +1,304 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+vars:
+  ENV: ./environment/.env
+tasks:
+  default:
+    desc: "📋 SSL 列出 local registry 所有 image（cert 直接從 K8s secret 取，不寫入任何檔案）"
+    silent: true
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        TMPCA=$(mktemp)
+        TMPNETRC=$(mktemp)
+        chmod 600 "$TMPNETRC"
+        kubectl get secret local-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d > "$TMPCA"
+        printf 'machine registry.local login %s password %s\n' "$USERNAME" "$PASSWORD" > "$TMPNETRC"
+        trap "rm -f '$TMPCA' '$TMPNETRC'" EXIT
+        RESPONSE=$(curl -s --cacert "$TMPCA" --netrc-file "$TMPNETRC" "https://registry.local/v2/_catalog")
+        echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+
+  tags:
+    desc: "🔖 互動式選擇 image，依 commit 時間列出所有 tags"
+    silent: true
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        REGISTRY="https://registry.local"
+
+        TMPCA=$(mktemp)
+        TMPFILE=$(mktemp)
+        TMPNETRC=$(mktemp)
+        chmod 600 "$TMPNETRC"
+        if [ -d /dev/shm ]; then TMPCREDS=$(mktemp /dev/shm/git-creds-XXXXXX); else TMPCREDS=$(mktemp); fi
+        kubectl get secret local-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d > "$TMPCA"
+        printf 'machine registry.local login %s password %s\n' "$USERNAME" "$PASSWORD" > "$TMPNETRC"
+        GIT_USER=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.username}' | base64 -d)
+        GIT_PASS=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.password}' | base64 -d)
+        printf '#!/bin/sh\necho "username=%s"\necho "password=%s"\n' "$GIT_USER" "$GIT_PASS" > "$TMPCREDS"
+        chmod 700 "$TMPCREDS"
+        trap "rm -f '$TMPCA' '$TMPFILE' '$TMPNETRC' '$TMPCREDS'" EXIT
+
+        UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+        [ -z "$UPSTREAM" ] && echo "⚠️ 目前分支未設置 upstream，請執行：git branch --set-upstream-to=<remote>/master" && exit 1
+        UPSTREAM_REMOTE=$(echo "$UPSTREAM" | cut -d'/' -f1)
+
+        REPOS=$(curl -s --cacert "$TMPCA" --netrc-file "$TMPNETRC" \
+          "${REGISTRY}/v2/_catalog" | jq -r '.repositories[]')
+
+        [ -z "$REPOS" ] && echo "❌ registry 沒有任何 image" && exit 1
+
+        SELECTED=$(echo "$REPOS" | gum choose --header "選擇要查看 tags 的 image：")
+        [ -z "$SELECTED" ] && echo "❌ 未選擇" && exit 1
+
+        TAGS=$(curl -s --cacert "$TMPCA" --netrc-file "$TMPNETRC" \
+          "${REGISTRY}/v2/${SELECTED}/tags/list" | jq -r '.tags[] // empty')
+
+        [ -z "$TAGS" ] && echo "❌ 沒有任何 tag" && exit 1
+
+        TAG_COUNT=$(echo "$TAGS" | wc -l)
+        echo ""
+        echo "📦 ${SELECTED}：共 ${TAG_COUNT} 個 tag，查詢 commit 時間中..."
+
+        FETCH_ERR=$(GIT_TERMINAL_PROMPT=0 git -c "credential.helper=" -c "credential.helper=!$TMPCREDS" fetch "$UPSTREAM_REMOTE" 2>&1) || { echo "⚠️ git fetch $UPSTREAM_REMOTE 失敗: $FETCH_ERR"; exit 1; }
+
+        i=0
+        while IFS= read -r TAG; do
+          i=$((i + 1))
+          printf "\r  ⏳ %d / %d  %-40s" "$i" "$TAG_COUNT" "$TAG"
+
+          if echo "$TAG" | grep -qE '^[0-9a-f]{7,8}$'; then
+            CREATED_TS=$(git log -1 --format="%ct" "$TAG" 2>/dev/null || true)
+            if [ -n "$CREATED_TS" ] && [ "$CREATED_TS" -ne 0 ] 2>/dev/null; then
+              LOCAL_TIME=$(TZ=Asia/Taipei date -d "@${CREATED_TS}" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "(無法取得)")
+              printf "%s\t%s\t%s\n" "$CREATED_TS" "$LOCAL_TIME" "$TAG" >> "$TMPFILE"
+            else
+              printf "%s\t%s\t%s\n" "0" "(commit 不在 repo)" "$TAG" >> "$TMPFILE"
+            fi
+          else
+            printf "%s\t%s\t%s\n" "1" "(OCI/穩定版)" "$TAG" >> "$TMPFILE"
+          fi
+        done <<< "$TAGS"
+
+        printf "\r%-60s\r" " "
+
+        echo ""
+        printf "  %-22s  %s\n" "建立時間 (台北)" "Tag"
+        printf "  %-22s  %s\n" "──────────────────────" "──────────────────────────────"
+        sort -rn "$TMPFILE" | awk -F'\t' '{printf "  %-22s  %s\n", $2, $3}'
+
+  grep:
+    desc: "🔍 互動式選擇 image，輸入 commit hash 過濾 tags（最多顯示 5 筆）"
+    silent: true
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        REGISTRY="https://registry.local"
+
+        TMPCA=$(mktemp)
+        TMPFILE=$(mktemp)
+        TMPNETRC=$(mktemp)
+        chmod 600 "$TMPNETRC"
+        if [ -d /dev/shm ]; then TMPCREDS=$(mktemp /dev/shm/git-creds-XXXXXX); else TMPCREDS=$(mktemp); fi
+        kubectl get secret local-ca-secret -n cert-manager -o jsonpath='{.data.ca\.crt}' | base64 -d > "$TMPCA"
+        printf 'machine registry.local login %s password %s\n' "$USERNAME" "$PASSWORD" > "$TMPNETRC"
+        GIT_USER=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.username}' | base64 -d)
+        GIT_PASS=$(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.password}' | base64 -d)
+        printf '#!/bin/sh\necho "username=%s"\necho "password=%s"\n' "$GIT_USER" "$GIT_PASS" > "$TMPCREDS"
+        chmod 700 "$TMPCREDS"
+        trap "rm -f '$TMPCA' '$TMPFILE' '$TMPNETRC' '$TMPCREDS'" EXIT
+
+        UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)
+        [ -z "$UPSTREAM" ] && echo "⚠️ 目前分支未設置 upstream，請執行：git branch --set-upstream-to=<remote>/master" && exit 1
+        UPSTREAM_REMOTE=$(echo "$UPSTREAM" | cut -d'/' -f1)
+
+        REPOS=$(curl -s --cacert "$TMPCA" --netrc-file "$TMPNETRC" \
+          "${REGISTRY}/v2/_catalog" | jq -r '.repositories[]')
+
+        [ -z "$REPOS" ] && echo "❌ registry 沒有任何 image" && exit 1
+
+        SELECTED=$(echo "$REPOS" | gum choose --header "選擇要查看 tags 的 image：")
+        [ -z "$SELECTED" ] && echo "❌ 未選擇" && exit 1
+
+        PATTERN=$(gum input --placeholder "輸入 commit hash 或關鍵字（留空顯示最新 5 筆）")
+
+        TAGS=$(curl -s --cacert "$TMPCA" --netrc-file "$TMPNETRC" \
+          "${REGISTRY}/v2/${SELECTED}/tags/list" | jq -r '.tags[] // empty')
+
+        [ -z "$TAGS" ] && echo "❌ 沒有任何 tag" && exit 1
+
+        if [ -n "$PATTERN" ]; then
+          FILTERED=$(echo "$TAGS" | grep "$PATTERN" || true)
+        else
+          FILTERED="$TAGS"
+        fi
+
+        [ -z "$FILTERED" ] && echo "❌ 沒有符合 '$PATTERN' 的 tag" && exit 0
+
+        MATCH_COUNT=$(echo "$FILTERED" | wc -l)
+        echo ""
+        echo "📦 ${SELECTED}：找到 ${MATCH_COUNT} 筆，查詢 commit 時間中..."
+
+        FETCH_ERR=$(GIT_TERMINAL_PROMPT=0 git -c "credential.helper=" -c "credential.helper=!$TMPCREDS" fetch "$UPSTREAM_REMOTE" 2>&1) || { echo "⚠️ git fetch $UPSTREAM_REMOTE 失敗: $FETCH_ERR"; exit 1; }
+
+        i=0
+        while IFS= read -r TAG; do
+          i=$((i + 1))
+          printf "\r  ⏳ %d / %d  %-40s" "$i" "$MATCH_COUNT" "$TAG"
+
+          if echo "$TAG" | grep -qE '^[0-9a-f]{7,8}$'; then
+            CREATED_TS=$(git log -1 --format="%ct" "$TAG" 2>/dev/null || true)
+            if [ -n "$CREATED_TS" ] && [ "$CREATED_TS" -ne 0 ] 2>/dev/null; then
+              LOCAL_TIME=$(TZ=Asia/Taipei date -d "@${CREATED_TS}" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "(無法取得)")
+              printf "%s\t%s\t%s\n" "$CREATED_TS" "$LOCAL_TIME" "$TAG" >> "$TMPFILE"
+            else
+              printf "%s\t%s\t%s\n" "0" "(commit 不在 repo)" "$TAG" >> "$TMPFILE"
+            fi
+          else
+            printf "%s\t%s\t%s\n" "1" "(OCI/穩定版)" "$TAG" >> "$TMPFILE"
+          fi
+        done <<< "$FILTERED"
+
+        printf "\r%-60s\r" " "
+
+        echo ""
+        printf "  %-22s  %s\n" "建立時間 (台北)" "Tag"
+        printf "  %-22s  %s\n" "──────────────────────" "──────────────────────────────"
+        sort -rn "$TMPFILE" | head -5 | awk -F'\t' '{printf "  %-22s  %s\n", $2, $3}'
+
+  sync:
+    desc: "🔄 從 registry 取得最新 digest 並更新 values-production.yaml"
+    silent: true
+    cmds:
+      - |
+        REGISTRY="https://registry.local"
+        ACCEPT="application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json"
+
+        TMPCA=$(mktemp)
+        TMPNETRC=$(mktemp)
+        chmod 600 "$TMPNETRC"
+        kubectl get secret local-ca-secret -n cert-manager \
+          -o jsonpath='{.data.ca\.crt}' | base64 -d > "$TMPCA"
+        REGISTRY_AUTH=$(kubectl get secret local-registry-auth -n default \
+          -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d \
+          | grep -o '"registry\.local":{"auth":"[^"]*"' \
+          | sed 's/.*"auth":"\([^"]*\)".*/\1/' | base64 -d)
+        printf 'machine registry.local login %s password %s\n' \
+          "$(echo "$REGISTRY_AUTH" | cut -d: -f1)" \
+          "$(echo "$REGISTRY_AUTH" | cut -d: -f2-)" > "$TMPNETRC"
+        trap "rm -f '$TMPCA' '$TMPNETRC'" EXIT
+
+        update_digest() {
+          REPO="$1" BASE_TAG="$2" FILE="$3"
+          NEW_DIGEST=$(curl -sI \
+            --cacert "$TMPCA" --netrc-file "$TMPNETRC" \
+            -H "Accept: ${ACCEPT}" \
+            "${REGISTRY}/v2/${REPO}/manifests/${BASE_TAG}" \
+            | grep -i "^docker-content-digest:" | tr -d '\r' | awk '{print $2}')
+
+          if [ -z "$NEW_DIGEST" ]; then
+            echo "  ❌ ${REPO}:${BASE_TAG} → 無法取得 digest"
+            return
+          fi
+
+          OLD_DIGEST=$(grep -oE "${BASE_TAG}@sha256:[^\"]*" "$FILE" | head -1 | cut -d@ -f2 || true)
+          if [ "$OLD_DIGEST" = "$NEW_DIGEST" ]; then
+            echo "  ✅ ${REPO}:${BASE_TAG} → 已是最新（${NEW_DIGEST:7:12}…）"
+            return
+          fi
+
+          sed -i "s|tag: \"${BASE_TAG}@sha256:[^\"]*\"|tag: \"${BASE_TAG}@${NEW_DIGEST}\"|" "$FILE"
+          echo "  🔄 ${REPO}:${BASE_TAG}"
+          echo "       舊: ${OLD_DIGEST:-（無）}"
+          echo "       新: ${NEW_DIGEST}"
+        }
+
+        echo "📄 deploy/helm/app/web/values-production.yaml"
+        update_digest "my-php-release"              "debian-bookworm" "deploy/helm/app/web/values-production.yaml"
+        update_digest "my-inner-unprivileged-nginx" "alpine"          "deploy/helm/app/web/values-production.yaml"
+
+        echo "📄 deploy/helm/app/services/values-production.yaml"
+        update_digest "my-php-release"              "debian-bookworm" "deploy/helm/app/services/values-production.yaml"
+
+        echo ""
+        if git diff --quiet deploy/helm/app/web/values-production.yaml \
+                             deploy/helm/app/services/values-production.yaml; then
+          echo "✅ 無變更，跳過 commit"
+        else
+          git add deploy/helm/app/web/values-production.yaml \
+                  deploy/helm/app/services/values-production.yaml
+          git commit -m "chore: sync image digest [ci skip]"
+          echo "✅ 已 commit（[ci skip] 不觸發 CI）"
+        fi
+
+  clean:
+    desc: "🧹 手動觸發 registry 清理（retention 180s，完成後自動刪除 Job）"
+    silent: true
+    cmds:
+      - |
+        NAMESPACE="default"
+        JOB_NAME="registry-clean-$(date +%s)"
+
+        echo "🔧 從 CronJob 建立清理 Job：${JOB_NAME}..."
+
+        kubectl get cronjob registry-cleaner -n ${NAMESPACE} -o json \
+          | jq --arg name "$JOB_NAME" --arg ns "$NAMESPACE" '
+              .spec.jobTemplate
+              | .metadata = {"name": $name, "namespace": $ns}
+              | .spec.template.spec.initContainers = [
+                  .spec.template.spec.initContainers[] |
+                  if .name == "image-cleanup" then
+                    . + {"env": [{"name": "RETENTION_SECONDS", "value": "180"}]}
+                  else . end
+                ]
+              | {apiVersion: "batch/v1", kind: "Job"} + .
+            ' \
+          | kubectl apply -f -
+
+        echo "⏳ 等待 Pod 啟動..."
+        until POD_NAME=$(kubectl get pods -n ${NAMESPACE} -l job-name=${JOB_NAME} \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null) && [ -n "$POD_NAME" ]; do sleep 1; done
+
+        stream_container() {
+          SNAMESPACE="$1" SPOD="$2" SCONTAINER="$3"
+          echo "📋 [${SCONTAINER}]"
+          WAITED=0
+          until kubectl logs -n "$SNAMESPACE" "$SPOD" -c "$SCONTAINER" >/dev/null 2>&1; do
+            sleep 2; WAITED=$((WAITED+2))
+            STATE=$(kubectl get pod -n "$SNAMESPACE" "$SPOD" \
+              -o jsonpath="{.status.initContainerStatuses[?(@.name==\"$SCONTAINER\")].state}" 2>/dev/null \
+              || kubectl get pod -n "$SNAMESPACE" "$SPOD" \
+              -o jsonpath="{.status.containerStatuses[?(@.name==\"$SCONTAINER\")].state}" 2>/dev/null || echo "unknown")
+            echo "  ⏳ ${SCONTAINER} 等待中 (${WAITED}s) state=${STATE}"
+            if [ "$WAITED" -ge 120 ]; then
+              echo "  ❌ ${SCONTAINER} 超過 120s 未啟動，pod 狀態："
+              kubectl describe pod -n "$SNAMESPACE" "$SPOD" 2>/dev/null | tail -30 || true
+              return 1
+            fi
+          done
+          kubectl logs -n "$SNAMESPACE" -f "$SPOD" -c "$SCONTAINER" 2>&1 || true
+          EXIT_CODE=$(kubectl get pod -n "$SNAMESPACE" "$SPOD" \
+            -o jsonpath="{.status.initContainerStatuses[?(@.name==\"$SCONTAINER\")].state.terminated.exitCode}" 2>/dev/null \
+            || kubectl get pod -n "$SNAMESPACE" "$SPOD" \
+            -o jsonpath="{.status.containerStatuses[?(@.name==\"$SCONTAINER\")].state.terminated.exitCode}" 2>/dev/null || echo "?")
+          echo "  → exit code: ${EXIT_CODE}"
+          echo ""
+        }
+
+        stream_container ${NAMESPACE} ${POD_NAME} image-cleanup
+        stream_container ${NAMESPACE} ${POD_NAME} scale-down
+        stream_container ${NAMESPACE} ${POD_NAME} clean
+
+        echo "⏳ 等待 scale-up 完成..."
+        kubectl wait job/${JOB_NAME} -n ${NAMESPACE} --for=condition=complete --timeout=180s
+        WAIT_STATUS=$?
+        [ $WAIT_STATUS -ne 0 ] && echo "❌ Job 失敗或超時，請手動查：kubectl logs -n ${NAMESPACE} -l job-name=${JOB_NAME}" && exit 1
+
+        echo "📋 [scale-up]"
+        kubectl logs -n ${NAMESPACE} ${POD_NAME} -c scale-up 2>/dev/null || true
+
+        kubectl delete job/${JOB_NAME} -n ${NAMESPACE}
+        echo "✅ 完成"

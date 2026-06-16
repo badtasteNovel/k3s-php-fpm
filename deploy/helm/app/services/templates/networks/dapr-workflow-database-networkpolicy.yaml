@@ -1,0 +1,29 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    # 這裡放你原本想寫的第二個名字，作為說明
+    network-type: "allow from web php-fpm"
+    description: "允許來自web 的laravel 去溝通"
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+  name: dapr-workflow-database
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  podSelector: 
+    matchLabels:
+      io.kompose.network/dapr-workflow-database-network: "true"
+  policyTypes:
+   - Ingress
+  ingress: # 入站流量
+    - from:
+      # 允許「同一個網路標籤」的人互連
+      - namespaceSelector:
+          matchLabels:
+            # 這裡填入 internal-gateway 所在的命名空間標籤
+            # 如果不確定，可以直接用自動產生的名稱標籤
+            kubernetes.io/metadata.name: web
+        podSelector:
+          matchLabels:
+            io.kompose.network/php-app-network: "true"

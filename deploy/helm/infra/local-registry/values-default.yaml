@@ -1,0 +1,23 @@
+# values.yaml
+GUI: true
+
+registryMirror:
+  host: "localhost"
+
+extraEnv:
+  REGISTRY_STORAGE_DELETE_ENABLED: "true"
+  # 注意這裡我故意把 Port 的部分留空或用占位符，但在 Template 處理最準
+  REGISTRY_HTTP_HEADERS_Access-Control-Allow-Origin: "http://local-registry.local"
+  REGISTRY_HTTP_HEADERS_Access-Control-Allow-Methods: '["HEAD","GET","OPTIONS","DELETE"]'
+  REGISTRY_HTTP_HEADERS_Access-Control-Allow-Headers: '["Authorization","Accept","Cache-Control"]'
+  REGISTRY_HTTP_HEADERS_Access-Control-Expose-Headers: '["Docker-Content-Digest"]'
+
+gui_config:
+  port: 9081
+  delete_images: "true"
+  catalog_limit: 100
+
+gui_image:
+  repository: joxit/docker-registry-ui
+  pullPolicy: IfNotPresent
+  tag: "latest"

@@ -1,0 +1,15 @@
+singleNode: true
+
+service:
+  resources:
+    requests:
+      cpu: "10m"
+      memory: "128Mi"
+    limits:
+      cpu: "100m"
+      memory: "512Mi"
+
+data: # redis pvc的大小
+  resources:
+    requests:
+      storage: 1Gi # 從原本的 1Gi 擴展至 5Gi

@@ -1,0 +1,122 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+  firewall-allow:
+    desc: "允許特定 IP 存取 K3s API Server"
+    silent: true
+    cmds:
+      - sudo ufw allow from 10.42.0.0/16
+      - sudo ufw allow from 10.43.0.0/16
+      - sudo ufw reload
+  create-sudo-user:
+    desc: "建立新使用者並加入 sudo 群組"
+    silent: true
+    cmds:
+      - |
+        if [ -z "{{.USERNAME}}" ] || [ -z "{{.PASSWORD}}" ]; then
+          echo "Usage: task create-sudo-user USERNAME=<username> PASSWORD=<password>"
+          exit 1
+        fi
+        if id "{{.USERNAME}}" &>/dev/null; then
+          echo "⚠️  使用者 '{{.USERNAME}}' 已存在，跳過建立"
+        else
+          sudo useradd -m -s /bin/bash "{{.USERNAME}}"
+          echo "✅ 已建立使用者 '{{.USERNAME}}'"
+        fi
+        echo "{{.USERNAME}}:{{.PASSWORD}}" | sudo chpasswd
+        echo "✅ 已設定密碼"
+        sudo usermod -aG sudo "{{.USERNAME}}"
+        echo "✅ 已將使用者 '{{.USERNAME}}' 加入 sudo 群組"
+        echo "⚠️  請重新登入以套用變更"
+    vars:
+      USERNAME: '{{.USERNAME}}'
+      PASSWORD: '{{.PASSWORD}}'
+  registry-login:
+    desc: "🔑 登入 local registry（從 environment/.env 讀取帳密）"
+    silent: true
+    vars:
+      ENV: ./environment/.env
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        [ -z "$USERNAME" ] && echo "❌ REGISTRY_USERNAME 未設定" && exit 1
+        [ -z "$PASSWORD" ] && echo "❌ REGISTRY_PASSWORD 未設定" && exit 1
+        echo "$PASSWORD" | docker login registry.local -u "$USERNAME" --password-stdin
+
+  reset-k3s:
+    desc: "💣 刪除 K3s cluster DB（/var/lib/rancher/k3s/server/db）並重啟"
+    silent: true
+    preconditions:
+      - sh: '[ $(id -u) -eq 0 ]'
+        msg: "請用 sudo task manual:reset-k3s 執行"
+    cmds:
+      - |
+        bash << 'END'
+        gum style --foreground 196 --bold "⚠️  警告：此操作將刪除 K3s cluster DB，所有 K8s 資源將消失！"
+        echo ""
+        CODE=$(tr -dc 'A-Z0-9' < /dev/urandom | head -c 6)
+        gum style --foreground 220 "請輸入以下驗證碼以繼續："
+        gum style --foreground 220 --bold "  $CODE"
+        echo ""
+        INPUT=$(gum input --placeholder "輸入驗證碼")
+        if [ "$INPUT" != "$CODE" ]; then
+          gum style --foreground 196 "❌ 驗證碼錯誤，操作取消"
+          exit 1
+        fi
+        echo ""
+        gum style --foreground 196 --bold "即將刪除 /var/lib/rancher/k3s/server/db"
+        gum style "按 Ctrl+C 可在 10 秒內取消..."
+        for ((i=10; i>=1; i--)); do
+          printf "\r還剩 %d 秒... " "$i"
+          sleep 1
+        done
+        echo ""
+        systemctl stop k3s
+        rm -rf /var/lib/rancher/k3s/server/db/
+        systemctl start k3s
+        gum style --foreground 82 --bold "✅ K3s cluster DB 已刪除並重啟，請重新執行 task deploy-dev"
+        END
+
+  save-base:
+    desc: "將 my-php-base:8.4 Docker image 匯出至 NAS 掛載點"
+    silent: true
+    cmds:
+      - |
+        # Step 1: 搜尋 /mnt 底下已掛載的路徑
+        MOUNTS=$(findmnt --list --noheadings --output TARGET | grep "^/mnt/" || true)
+
+        SELECTED_MOUNT=""
+
+        if [ -n "$MOUNTS" ]; then
+          CHOICE=$(printf "➕ 新增掛載點\n%s\n" "$MOUNTS" | gum choose --header "偵測到以下 /mnt 掛載點，請選擇或新增")
+          if [[ "$CHOICE" != "➕ 新增掛載點" ]]; then
+            SELECTED_MOUNT="$CHOICE"
+          fi
+        fi
+
+        # Step 2: 若未選擇現有掛載點，執行 makeMountPoint
+        if [ -z "$SELECTED_MOUNT" ]; then
+          bash scripts/bin/cifs-smbclient.sh makeMountPoint
+          MOUNTS=$(findmnt --list --noheadings --output TARGET | grep "^/mnt/" || true)
+          if [ -z "$MOUNTS" ]; then
+            echo "❌ 未找到任何掛載點，請確認掛載成功後再試。"
+            exit 1
+          fi
+          MOUNT_COUNT=$(echo "$MOUNTS" | wc -l)
+          if [ "$MOUNT_COUNT" -eq 1 ]; then
+            SELECTED_MOUNT="$MOUNTS"
+          else
+            SELECTED_MOUNT=$(echo "$MOUNTS" | gum choose --header "請選擇要儲存的掛載點")
+          fi
+        fi
+
+        # Step 3: 輸入檔名並 docker save
+        FILENAME=$(gum input --placeholder "輸入輸出檔名（不含副檔名）" --value "my-php-base-8.4")
+        [ -z "$FILENAME" ] && echo "❌ 未輸入檔名，取消操作。" && exit 1
+
+        OUTPUT_PATH="$SELECTED_MOUNT/$FILENAME.tar"
+        echo "正在將 my-php-base:8.4 匯出至 $OUTPUT_PATH ..."
+        docker save my-php-base:8.4 | sudo tee "$OUTPUT_PATH" > /dev/null && echo "✅ 成功匯出至 $OUTPUT_PATH"
+
+

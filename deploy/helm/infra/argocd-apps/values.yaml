@@ -1,0 +1,6 @@
+forgejo:
+  host: forgejo-http.forgejo.svc.cluster.local
+  port: 3000
+  ssl: false
+  org: "sureway_tachiung"
+  repo: "indium"

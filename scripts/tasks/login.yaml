@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+  oci:
+    desc: "🔑 登入 GitHub Container Registry (ghcr.io)，讓 Helm 可拉取 OCI chart（需要 read:packages 權限）"
+    silent: true
+    cmds:
+      - |
+        [ -z "$GITHUB_MAIL" ] && echo "❌ GITHUB_MAIL 未設定（請在 .env.task 設定）" && exit 1
+        [ -z "$GITHUB_PAT" ]  && echo "❌ GITHUB_PAT 未設定（請在 .env.task 設定，需要 read:packages 權限）" && exit 1
+        echo "$GITHUB_PAT" | helm registry login ghcr.io -u "$GITHUB_MAIL" --password-stdin
+
+  quay:
+    desc: "🔑 登入 Quay.io Container Registry"
+    silent: true
+    cmds:
+      - |
+        [ -z "$QUAY_USERNAME" ] && echo "❌ QUAY_USERNAME 未設定（請在 .env.task 設定）" && exit 1
+        [ -z "$QUAY_PAT" ]      && echo "❌ QUAY_PAT 未設定（請在 .env.task 設定）" && exit 1
+        echo "$QUAY_PAT" | helm registry login quay.io -u "$QUAY_USERNAME" --password-stdin
+
+  registry:
+    desc: "🔑 登入 local registry (registry.local)，從 environment/.env 讀取帳密"
+    silent: true
+    vars:
+      ENV: ./environment/.env
+    cmds:
+      - |
+        USERNAME="$(grep '^REGISTRY_USERNAME=' {{.ENV}} | cut -d'=' -f2-)"
+        PASSWORD="$(grep '^REGISTRY_PASSWORD=' {{.ENV}} | cut -d'=' -f2-)"
+        [ -z "$USERNAME" ] && echo "❌ REGISTRY_USERNAME 未設定" && exit 1
+        [ -z "$PASSWORD" ] && echo "❌ REGISTRY_PASSWORD 未設定" && exit 1
+        echo "$PASSWORD" | docker login registry.local -u "$USERNAME" --password-stdin
+
+  docker:
+    desc: "🔑 登入 Docker Hub"
+    silent: true
+    cmds:
+      - |
+        [ -z "$DOCKER_USERNAME" ] && echo "❌ DOCKER_USERNAME 未設定（請在 .env.task 設定）" && exit 1
+        [ -z "$DOCKER_PAT" ]      && echo "❌ DOCKER_PAT 未設定（請在 .env.task 設定）" && exit 1
+        echo "$DOCKER_PAT" | docker login -u "$DOCKER_USERNAME" --password-stdin

@@ -1,0 +1,74 @@
+# deploy/helm/base/charts/roadrunner/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: road-runner
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.road_runner.replica }}
+  selector:
+    matchLabels:
+      app: road-runner
+      io.kompose.network/service-app-network: "true"
+  template:
+    metadata:
+      labels:
+        app: road-runner
+        io.kompose.network/service-app-network: "true"
+      annotations:
+        rollout-timestamp: {{ now | quote }}
+    spec:
+      containers:
+        - name: road-runner
+          image: {{ printf "%s:%s" (.Values.php_image.repository | default "registry.local/my-php-release") (.Values.php_image.tag | default "debian-bookworm") | quote }}
+          imagePullPolicy: Always
+          # 指令路徑請確保與 Dockerfile 一致，這裡加上 -o 參數強制讓 log 輸出更清晰
+          command: ["/var/www/html/rr", "serve", "-c", "/var/www/html/.rr.yaml"]
+          ports:
+            - name: status-port
+              containerPort: 2114
+            - name: metrics-port
+              containerPort: 2112
+          envFrom:
+            - secretRef:
+                name: app-env-secret
+          volumeMounts:
+            - name: rr-config
+              mountPath: /var/www/html/.rr.yaml
+              subPath: .rr.yaml
+
+          # Liveness: 檢查 RoadRunner 服務本身是否還活著
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: status-port
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+          # Readiness: 關鍵！檢查是否成功連接到 Temporal 伺服器
+          readinessProbe:
+            httpGet:
+              path: /health?plugin=temporal
+              port: status-port
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          resources:
+            requests:
+              cpu: {{ .Values.road_runner.resources.requests.cpu | default "100m" | quote }}
+              memory: {{ .Values.road_runner.resources.requests.memory | default "128Mi" | quote }}
+            limits:
+              cpu: {{ .Values.road_runner.resources.limits.cpu | default "300m" | quote }}
+              memory: {{ .Values.road_runner.resources.limits.memory | default "256Mi" | quote }}
+
+      volumes:
+        - name: rr-config
+          configMap:
+            name: road-runner-config
+
+      # 給予足夠的優雅停機時間，讓正在執行的 Temporal Task 有機會回傳結果
+      terminationGracePeriodSeconds: 60

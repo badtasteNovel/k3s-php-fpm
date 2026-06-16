@@ -1,0 +1,48 @@
+web:
+  mysql: # 資料庫的大小
+    storage: 20Gi
+
+  mysql_service: # 資料庫本身運行的資源
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+    
+  nginx:
+    replica: 3
+
+  php_fpm:
+    replica: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+
+  redis_data: # redis pvc的大小
+    resources:
+      requests:
+        storage: 5Gi # 從原本的 1Gi 擴展至 5Gi
+
+  redis_service: # redis service的resources
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "1Gi"
+      limits:
+        cpu: "500m"
+        memory: "1.5Gi"
+
+  vite_serve:
+    enabled: false
+  portainer:
+    enabled: false
+
+service:
+  test:
+    enabled: false

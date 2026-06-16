@@ -1,0 +1,16 @@
+# values-production.yaml (生產)
+road_runner:
+  replica: 2
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+php_image:
+  repository: "registry.local/my-php-release"
+  tag: "debian-bookworm@sha256:da48981b824a07c6e7da95413775217c8ff9bfd5ec6de06c97866d0755a02fb8"
+  pullPolicy: "Always"
+temporal_worker:
+  replica: 4

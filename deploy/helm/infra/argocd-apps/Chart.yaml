@@ -1,0 +1,5 @@
+apiVersion: v2
+name: argocd-apps
+description: ArgoCD Application CRs
+type: application
+version: 0.1.0

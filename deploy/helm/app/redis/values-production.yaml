@@ -1,0 +1,16 @@
+
+
+data: # redis pvc的大小
+  resources:
+    requests:
+      storage: 5Gi # 從原本的 1Gi 擴展至 5Gi
+
+service: # redis service的resources
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "1.5Gi"
+

@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: registry-api-gateway
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    tier: gateway
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      gateway-registry-ip-allowlist@kubernetescrd,
+      gateway-registry-rate-limit@kubernetescrd,
+      gateway-external-security-headers@kubernetescrd
+spec:
+  ingressClassName: external-traefik
+  tls:
+    - hosts:
+        - registry.local
+  rules:
+    - host: registry.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: registry-gateway-proxy
+                port:
+                  number: 5000

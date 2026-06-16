@@ -1,0 +1,10 @@
+pulse:
+  hostname: pulse.test
+  middlewares: "gateway-external-security-headers@kubernetescrd, gateway-external-body-size@kubernetescrd"
+
+common:
+  traefik:
+    ports:
+      websecure:
+        tls:
+          certResolver: ""

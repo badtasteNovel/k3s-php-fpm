@@ -1,0 +1,124 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+vars:
+  CIFS_SMBCLIENT: "./scripts/bin/cifs-smbclient.sh"
+tasks:
+  unmount:
+    desc: "🛡️ 選擇並安全卸載 /mnt 下的掛載點"
+    silent: true
+    vars:
+      TARGET:
+        sh: |
+          MOUNT_LIST=$(mount | grep '^//' | awk '{print $3}' | grep '^/mnt')
+          if [ -z "$MOUNT_LIST" ]; then
+            echo "NONE"
+          else
+            echo "$MOUNT_LIST" | gum choose --header "請選擇要卸載的掛載點："
+          fi
+    preconditions:
+      - sh: "[ $(id -u) -eq 0 ]"
+        msg: "❌ 需要 sudo 權限，請執行 'sudo task mount:unmount'"
+      - sh: "[ '{{.TARGET}}' != 'NONE' ]"
+        msg: "ℹ️ 目前 /mnt 下沒有偵測到任何網路掛載點。"
+      - sh: "mountpoint -q {{.TARGET}}"
+        msg: "⚠️ 路徑 '{{.TARGET}}' 已經不是掛載點了。"
+    cmds:
+      - |
+        echo "⏳ 正在卸載 {{.TARGET}}..."
+        umount -l "{{.TARGET}}"
+
+        while mountpoint -q "{{.TARGET}}"; do
+          sleep 0.5
+          echo -n "."
+        done
+        echo ""
+
+        if [ -d "{{.TARGET}}" ]; then
+          rm -rf "{{.TARGET}}"
+          echo "✅ 已成功移除掛載點與資料夾：{{.TARGET}}"
+        fi
+
+  _k8s-backup-config:
+    interactive: true
+    internal: true
+    silent: true
+    desc: "設定掛載相關的環境變數"
+    cmds:
+      - bash {{ .CIFS_SMBCLIENT }} config
+  _k8s-backup-cred:
+    interactive: true
+    internal: true
+    silent: true
+    desc: "設定掛載憑證內容"
+    deps: ['_k8s-backup-config']
+    status:
+      - kubectl get secret nas-backup-creds -n web
+    cmds:
+      - |
+        sudo kubectl create secret generic nas-backup-creds \
+          --from-env-file=/root/.nascredentials \
+          --namespace web \
+          --dry-run=client -o yaml | kubectl apply -f -
+    preconditions:
+      - sh: '[ $(id -u) -eq 0 ]'
+        msg: "錯誤：必須使用sudo"
+
+  k8s-forge-database-backup:
+    silent: true
+    interactive: true
+    desc: "🏗️設定 git 備份空間"
+    deps: ['_k8s-backup-cred']
+    cmds:
+      - |
+        set -e
+        pv_status=$(kubectl get pv nas-forgejo-git-backup --ignore-not-found -o jsonpath='{.status.phase}' 2>/dev/null)
+        if [ "$pv_status" = "Bound" ]; then
+          gum confirm "⚠️  nas-forgejo-git-backup PV 已綁定，是否要解除綁定並重新建立？" || exit 0
+          kubectl patch pv nas-forgejo-git-backup -p '{"spec":{"claimRef": null}}'
+          exit 0
+        elif [ "$pv_status" = "Released" ]; then
+          gum confirm "🔄 PV 處於 Released 狀態，是否重新綁定？" || exit 0
+          kubectl patch pv nas-forgejo-git-backup -p '{"spec":{"claimRef": null}}'
+          exit 0
+        fi
+        size=$(gum input --placeholder "輸入儲存空間大小 (例如: 10Gi)" --header "NAS 備份儲存空間" --value "500Gi")
+        if [ -z "$size" ]; then echo "已取消"; exit 1; fi
+        mountData=$(bash {{ .CIFS_SMBCLIENT }} exportBrowse)
+        if [ -z "$mountData" ]; then echo "已取消選擇"; exit 1; fi
+        nasIp=$(echo "$mountData" | cut -d'|' -f1)
+        targetPath=$(echo "$mountData" | cut -d'|' -f2)
+        helm upgrade --install forge-backup-storage ./deploy/helm/base/charts/forgejo-db-backup-storage \
+          --set nas_ip="$nasIp" \
+          --set nas_path="$targetPath" \
+          --set database_backup_storage="$size"
+  k8s-database-backup:
+    silent: true
+    interactive: true
+    desc: "🏗️設定 K8s NAS 儲存環境"
+    deps: ['_k8s-backup-cred']
+    cmds:
+      - |
+        set -e
+        pv_status=$(kubectl get pv nas-backup-pv --ignore-not-found -o jsonpath='{.status.phase}' 2>/dev/null)
+        if [ "$pv_status" = "Bound" ]; then
+          gum confirm "⚠️  nas-backup-pv PV 已綁定，是否要解除綁定並重新建立？" || exit 0
+          kubectl patch pv nas-backup-pv -p '{"spec":{"claimRef": null}}'
+          exit 0
+        elif [ "$pv_status" = "Released" ]; then
+          gum confirm "🔄 PV 處於 Released 狀態，是否重新綁定？" || exit 0
+          kubectl patch pv nas-backup-pv -p '{"spec":{"claimRef": null}}'
+          exit 0
+        fi
+        size=$(gum input --placeholder "輸入儲存空間大小 (例如: 10Gi)" --header "NAS 備份儲存空間" --value "500Gi")
+        if [ -z "$size" ]; then echo "已取消"; exit 1; fi
+        mountData=$(bash {{ .CIFS_SMBCLIENT }} exportBrowse)
+        if [ -z "$mountData" ]; then echo "已取消選擇"; exit 1; fi
+        nasIp=$(echo "$mountData" | cut -d'|' -f1)
+        targetPath=$(echo "$mountData" | cut -d'|' -f2)
+        helm upgrade --install backup-storage ./deploy/helm/base/charts/storage \
+          --set nas_ip="$nasIp" \
+          --set nas_path="$targetPath" \
+          --set database_backup_storage="$size"
+    preconditions:
+      - sh: '[ $(id -u) -eq 0 ]'
+        msg: "錯誤：必須使用sudo"

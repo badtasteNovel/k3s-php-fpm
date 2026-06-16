@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulse-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    io.kompose.service: pulse-worker
+    io.kompose.network/web-app-network: "true"
+    io.kompose.network/web-redis-network: "true"
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: pulse-worker
+  template:
+    metadata:
+      labels:
+        io.kompose.service: pulse-worker
+        io.kompose.network/web-app-network: "true"
+        io.kompose.network/web-redis-network: "true"
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+        - name: pulse-worker
+          image: {{ printf "%s:%s" (.Values.php_image.repository | default "registry.local/my-php-release") (.Values.php_image.tag | default "debian-bookworm") | quote }}
+          imagePullPolicy: Always
+          command: ["php", "artisan", "pulse:work"]
+          envFrom:
+            - secretRef:
+                name: app-env-secret
+          env:
+            - name: TZ
+              value: Asia/Taipei
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          workingDir: /var/www/html

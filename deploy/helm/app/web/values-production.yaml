@@ -1,0 +1,81 @@
+mysql: # 資料庫的大小
+  storage: 20Gi
+  innodb_aio: 1
+  max_connections: 1000
+database_backup:
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "1Gi"
+      storage: "3Gi"
+    limits:
+      cpu: "5000m"
+      memory: "5Gi"
+      storage: "1Ti"
+mysql_service: # 資料庫本身運行的資源
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+nginx:
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "128Mi"
+    limits:
+      cpu: "1000m"
+      memory: "256Mi"
+    config:
+      buffer:
+        # 處理 Header (如大的 Cookie 或 JWT)
+        size: "32k"
+        # 緩衝區數量與大小 (4 * 64k = 256k 總緩衝)
+        number: 4
+        per_buffer: "64k"
+        # 當傳輸進行時，能持續從後端讀取的空間
+        busy_size: "128k"
+php_fpm:
+  replica: 3
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+redis_data: # redis pvc的大小
+  resources:
+    requests:
+      storage: 5Gi # 從原本的 1Gi 擴展至 5Gi
+redis_service: # redis service的resources
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "1.5Gi"
+vite_serve:
+  enabled: false
+portainer:
+  enabled: false
+podSecurityContext:
+  enabled: false
+development:
+  enabled: false
+  mount: false
+  runAsRoot: false
+  debug: false
+singleNode: true
+# 專業的拆分方式
+php_image:
+  repository: "registry.local/my-php-release"
+  tag: "debian-bookworm@sha256:da48981b824a07c6e7da95413775217c8ff9bfd5ec6de06c97866d0755a02fb8"
+  pullPolicy: "Always"
+nginx_image:
+  repository: "registry.local/my-inner-unprivileged-nginx"
+  tag: "alpine@sha256:775e2b9dc666a7b176ee600908921e132ecced9b83c0021e0d2e5d0059da8b40"
+  pullPolicy: "Always"

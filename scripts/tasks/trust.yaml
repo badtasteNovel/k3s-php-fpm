@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+
+tasks:
+  registry:
+    desc: "🔐 從叢集同步 registry.local CA 憑證與帳密至本機 registries.yaml"
+    silent: true
+    vars:
+      CA_DEST: /usr/local/share/ca-certificates/indium.crt
+      REGISTRIES_YAML: /etc/rancher/k3s/registries.yaml
+    cmds:
+      - |
+        echo "⏳ 等待 web-app-certs secret 就緒..."
+        kubectl wait secret/web-app-certs -n gateway \
+          --for=jsonpath='{.data.ca\.crt}' --timeout=120s 2>/dev/null \
+          || kubectl wait secret/web-app-certs -n gateway --for=create --timeout=120s
+
+        echo "📥 從叢集取得 CA 憑證..."
+        kubectl get secret web-app-certs -n gateway \
+          -o jsonpath='{.data.ca\.crt}' | base64 -d \
+          | sudo tee {{.CA_DEST}} > /dev/null
+        echo "✅ CA 憑證寫入 {{.CA_DEST}}"
+
+        sudo update-ca-certificates
+        echo "✅ update-ca-certificates 完成"
+
+        echo "📝 寫入 {{.REGISTRIES_YAML}}..."
+        sudo tee {{.REGISTRIES_YAML}} > /dev/null << 'EOF'
+        configs:
+          "registry.local":
+            tls:
+              ca_file: /usr/local/share/ca-certificates/indium.crt
+        EOF
+        echo "✅ registries.yaml 已更新"
+        echo ""
+        echo "⚠️  若仍有 image pull x509 錯誤，請重啟 k3s："
+        echo "   sudo systemctl restart k3s"

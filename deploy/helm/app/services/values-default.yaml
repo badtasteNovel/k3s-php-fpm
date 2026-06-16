@@ -1,0 +1,15 @@
+# values-default.yaml (開發)
+road_runner:
+  replica: 1
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "300m"
+      memory: "192Mi"
+
+
+php_image:
+  repository: "registry.local/my-dev-php-fpm"
+  tag: "debian-bookworm"

@@ -1,0 +1,12 @@
+{{- if .Values.coreDnsCustom.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  local-domains.override: |
+    {{- range .Values.coreDnsCustom.localDomains }}
+    rewrite name exact {{ . }} {{ $.Values.coreDnsCustom.traefikService }}.{{ $.Values.coreDnsCustom.traefikNamespace }}.svc.cluster.local
+    {{- end }}
+{{- end }}

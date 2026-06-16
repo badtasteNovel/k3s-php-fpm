@@ -1,0 +1,13 @@
+coreDnsCustom:
+  enabled: true
+  localDomains:
+    - registry.local
+    - registry-ui.local
+    - forgejo.local
+    - sureway.local
+    - argo.local
+    - grafana.local
+    - temporal.local
+    - portainer.local
+    - sql.local
+    - lg-laravel.local

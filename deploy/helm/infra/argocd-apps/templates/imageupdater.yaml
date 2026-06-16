@@ -1,0 +1,45 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  commonUpdateSettings:
+    updateStrategy: digest
+  applicationRefs:
+    - namePattern: "web"
+      writeBackConfig:
+        method: "git:secret:argocd/image-updater-git-creds"
+        gitConfig:
+          repository: "ssh://git@forgejo-ssh.forgejo.svc.cluster.local:22/sureway_tachiung/indium.git"
+          branch: master
+          writeBackTarget: "helmvalues:values-production.yaml"
+          commitMessageTemplate: "build: automatic update of {{.AppName}} [skip ci]"
+      images:
+        - alias: php
+          imageName: "registry.local/my-php-release:debian-bookworm"
+          manifestTargets:
+            helm:
+              name: php_image.repository
+              tag: php_image.tag
+        - alias: nginx
+          imageName: "registry.local/my-inner-unprivileged-nginx:alpine"
+          manifestTargets:
+            helm:
+              name: nginx_image.repository
+              tag: nginx_image.tag
+    - namePattern: "service"
+      writeBackConfig:
+        method: "git:secret:argocd/image-updater-git-creds"
+        gitConfig:
+          repository: "ssh://git@forgejo-ssh.forgejo.svc.cluster.local:22/sureway_tachiung/indium.git"
+          branch: master
+          writeBackTarget: "helmvalues:values-production.yaml"
+          commitMessageTemplate: "build: automatic update of {{.AppName}} [skip ci]"
+      images:
+        - alias: php
+          imageName: "registry.local/my-php-release:debian-bookworm"
+          manifestTargets:
+            helm:
+              name: php_image.repository
+              tag: php_image.tag

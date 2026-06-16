@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nas-forgejo-git-backup
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4}}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4}}
+spec:
+  capacity:
+    storage: {{ .Values.database_backup_storage | default "1Gi" | quote}}
+  volumeMode: Filesystem
+  accessModes: # 允許多個不同的 Pod 同時對同一個儲存空間進行讀取與寫入。
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain # 建議加上這行，避免 PVC 刪除時 NAS 資料被刪除
+  mountOptions:
+    - vers=3.0
+    - dir_mode=0700
+    - file_mode=0600
+  csi:
+    driver: smb.csi.k8s.io # 指定使用 SMB CSI 驅動程式。你的 K8s 叢集必須安裝
+    volumeHandle: nas-backup-pvc-ed80ddff-6618-4a8a-9c8e-9db8d3b9e3f9
+    volumeAttributes:
+      source: {{ printf "//%s/%s" .Values.nas_ip .Values.nas_path | quote }}
+    nodeStageSecretRef: # nas 的secret 名稱
+      name: nas-backup-creds
+      namespace: web
+  storageClassName: "nas-backup-storage" # 自定義名稱

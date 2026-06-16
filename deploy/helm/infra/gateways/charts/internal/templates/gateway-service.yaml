@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-gateway-service # 你自己取的名字
+  namespace:  {{ .Release.Namespace | quote }} 
+  labels:
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: traefik
+    app.kubernetes.io/instance: "{{ .Release.Name }}-{{ .Release.Namespace }}"
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000

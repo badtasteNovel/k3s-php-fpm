@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: default
+  name: registry-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce # 讓多個 Pod 同時掛載
+  resources:
+    requests:
+      storage: 50Gi # 視你的硬碟大小調整

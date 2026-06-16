@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+  show-forgejo-admin:
+    desc: "🔑 顯示 Forgejo 管理員帳號密碼"
+    silent: true
+    cmd: |
+      echo "Username: $(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.username}' | base64 -d)"
+      echo "Password: $(kubectl get secret forgejo-admin-secret -n forgejo -o jsonpath='{.data.password}' | base64 -d)"
+
+  show-argo-admin:
+    desc: "🔑 顯示 ArgoCD 管理員帳號密碼"
+    silent: true
+    cmd: |
+      echo "Username: admin"
+      echo "Password: $(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
+
+  show-image-updater-key:
+    desc: "🔑 顯示 argocd-image-updater SSH 公鑰（貼到 Forgejo deploy keys）"
+    silent: true
+    cmd: |
+      kubectl get secret image-updater-git-creds -n argocd \
+        -o jsonpath='{.data.sshPrivateKey}' | base64 -d | ssh-keygen -y -f /dev/stdin
+
+  show-registry-cleaner-key:
+    desc: "🔑 顯示 registry-cleaner SSH 公鑰（貼到 Forgejo deploy keys）"
+    silent: true
+    cmd: |
+      kubectl get secret registry-cleaner-ssh-key -n default \
+        -o jsonpath='{.data.sshPrivateKey}' | base64 -d | ssh-keygen -y -f /dev/stdin

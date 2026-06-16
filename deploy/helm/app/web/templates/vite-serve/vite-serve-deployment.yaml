@@ -1,0 +1,85 @@
+{{- if .Values.vite_serve.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vite-serve
+  namespace: web # <--- 這裡指定門牌號碼
+  labels:
+    io.kompose.service: vite-serve
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+
+
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  replicas: 1 # 開發工具通常只需要 1 個
+  selector:
+    matchLabels:
+      io.kompose.network/web-app-network: "true"
+      io.kompose.service: vite-serve
+  template:
+    
+    metadata:
+      labels:
+        io.kompose.network/web-app-network: "true"
+        io.kompose.service: vite-serve
+      annotations:
+        rollout-timestamp: {{ now | quote }}
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane # 這裡是node的標籤(包含 control-plane 化名 server 以及 node 化名 kubelet或agent)
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+        - name: vite-serve
+          envFrom:
+            - secretRef:
+                name: app-env-secret
+          env:
+            - name: TZ
+              value: Asia/Taipei
+          image: {{ printf "%s/%s:%s" "registry.local" "my-vite-server" "20-bookworm" | quote }}
+          imagePullPolicy: Always
+          workingDir: /var/www/html
+          command: ["sh", "-c"]
+          args:
+            - "npm install && npm run dev -- --host 0.0.0.0 --cors" 
+          ports:
+            - containerPort: 5173
+              name: vite-port
+          resources:
+            limits:
+              memory: "2Gi"
+            requests:
+              memory: "512Mi"
+          {{- if .Values.development.mount }}
+          volumeMounts:
+            - name: vite-resources
+              mountPath: /var/www/html/resources
+            - name: vite-public
+              mountPath: /var/www/html/public
+            - name: vite-config
+              mountPath: /var/www/html/vite.config.ts
+          {{- end }}
+      {{- if .Values.development.mount }}
+      volumes:
+        - name: vite-resources
+          hostPath:
+            path: {{ .Values.development.mountPath }}/resources
+            type: Directory
+        - name: vite-public
+          hostPath:
+            path: {{ .Values.development.mountPath }}/public
+            type: Directory
+        - name: vite-config
+          hostPath:
+            path: {{ .Values.development.mountPath }}/vite.config.ts
+            type: File
+      {{- end }}
+{{- end }}
+

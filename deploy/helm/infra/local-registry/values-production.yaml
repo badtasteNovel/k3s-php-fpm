@@ -1,0 +1,12 @@
+resource:
+  requests:
+    memory: "300Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "2Gi"
+
+registryCleaner:
+  imageCleanup:
+    enabled: true
+    retentionDays: 15

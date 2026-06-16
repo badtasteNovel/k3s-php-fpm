@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+tasks:
+    # STATUS 的生命週期狀態。ready 代表它們正閒著
+    # EXECS 自啟動以來，該 Worker 執行過幾次任務。
+    watch-worker:
+      desc: '查看road-runner服務器有哪些workers'
+      cmd: kubectl exec -it deployment/road-runner -n service -c road-runner -- ./rr workers -i
+    watch-workflow:
+      desc: '顯示有哪些worker 正在特定隊列'
+      cmd: kubectl exec -it deployment/road-runner -n service -c road-runner -- ./rr temporal task-queue:describe product-expired-queue
+
+    debug:
+      desc: '選擇需要進行的debug動作'
+      cmd: "{{ .CHOOSE }} ./scripts/bin/debug.sh"
+    
+    log:
+      desc: "📜 查看容器各種狀態"
+      cmd: "{{ .CHOOSE }} ./scripts/bin/kubectl-log.sh"
+    
+    log-label:
+      desc: "查看各種labels"
+      silent: true
+      cmd: "{{ .CHOOSE }} scripts/bin/status/kubectl-labels.sh"
+    check-image:
+      desc: "檢查本地registry image"
+      silent: true
+      cmds:
+        - curl -s http://localhost:5000/v2/_catalog | jq .

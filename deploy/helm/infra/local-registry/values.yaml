@@ -1,0 +1,43 @@
+image:
+  repository: registry
+  pullPolicy: IfNotPresent
+  tag: "2"
+
+
+
+hostName: my-local-registry # 這是 Service 的名稱
+nodePort: 30500
+
+registryMirror:
+  host: nodeIP  # "nodeIP" = 動態抓 status.hostIP；其他值如 "localhost" 則直接使用
+
+port: 5000
+resource:
+  requests:
+    memory: "30Mi"
+    cpu: "100m"
+  limits:
+    memory: "500Mi"
+    cpu: "2Gi"
+
+registryCleaner:
+  hour: 4          # 幾點觸發（0-23）
+  dayOfWeek: 0     # 星期幾執行（0=週日, 1=週一 ... 6=週六）
+  deploymentName: "local-registry"
+  pvcName: "registry-pvc"
+  kubectlImage:
+    repository: registry.local/my-kubectl
+    tag: "latest"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  imageCleanupImage:
+    repository: registry.local/my-image-cleaner
+    tag: "latest"
+  imageCleanup:
+    enabled: false
+    retentionDays: 30

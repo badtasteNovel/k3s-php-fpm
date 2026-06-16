@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: internal-gateway
+  labels:
+    # 告訴 Helm：這個資源是由你管理的
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    # 告訴 Helm：你是屬於哪個 Release 名稱（這裡對應你最後執行的 helm upgrade 名稱）
+    meta.helm.sh/release-name: internal-gateway
+    # 告訴 Helm：這個 Release 是在哪個 Namespace 下執行的
+    meta.helm.sh/release-namespace: internal-gateway
+    helm.sh/resource-policy: keep

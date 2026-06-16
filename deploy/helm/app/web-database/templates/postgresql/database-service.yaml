@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    io.kompose.service: database
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: database
+  namespace: web # <--- 這裡指定門牌號碼
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  ports:
+    - name: "database-port"
+      port: 5432       # Service 供內部使用的埠號
+      targetPort: 5432 # Reverb 容器實際上在聽的埠號
+  selector:
+    io.kompose.service: database
+    # 嘗試連線完整名稱

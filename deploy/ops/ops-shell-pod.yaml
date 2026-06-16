@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ops-shell
+  namespace: ops
+spec:
+  restartPolicy: Never
+  volumes:
+    - name: kubeconfig
+      hostPath:
+        path: /etc/rancher/k3s/k3s.yaml
+    - name: project
+      hostPath:
+        path: ${PROJECT_PATH}
+    - name: docker-sock
+      hostPath:
+        path: /var/run/docker.sock
+  containers:
+    - name: ops-shell
+      image: registry.local/my-ops-php:latest
+      stdin: true
+      tty: true
+      command:
+        - bash
+        - -c
+        - |
+          kubectl config set-cluster default \
+            --server=https://kubernetes.default.svc:443 \
+            --insecure-skip-tls-verify=true
+          exec bash
+      volumeMounts:
+        - name: kubeconfig
+          mountPath: /root/.kube/config
+        - name: project
+          mountPath: /workspace
+        - name: docker-sock
+          mountPath: /var/run/docker.sock

@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: image-cleaner-script
+  namespace: kube-system
+data:
+  clean.sh: |
+    #!/bin/sh
+    set -e
+
+    DAYS_OLD=${DAYS_OLD:-7}
+    CUTOFF=$(date -d "${DAYS_OLD} days ago" +%s)
+
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 開始清理 ${DAYS_OLD} 天前的未使用 image..."
+
+    k3s crictl images -q 2>/dev/null | while read -r id; do
+        result=$(k3s crictl inspecti "$id" 2>/dev/null | awk '
+            BEGIN { tag = ""; created = ""; in_tags = 0 }
+            !tag && /"repoTags":/ {
+                in_tags = 0
+                if (match($0, /\["[^"]+"/)) {
+                    t = substr($0, RSTART+2, RLENGTH-3); tag = t
+                } else if (!/\[\]/) { in_tags = 1 }
+            }
+            in_tags && !tag && /^[[:space:]]+"[^"]+"[[:space:]]*$/ {
+                line = $0; sub(/^[[:space:]]*"/, "", line); sub(/".*/, "", line)
+                if (line != "") { tag = line; in_tags = 0 }
+            }
+            in_tags && /^[[:space:]]*\]/ { in_tags = 0 }
+            !created && /"created":/ {
+                line = $0; sub(/.*"created": *"/, "", line); sub(/".*/, "", line)
+                created = line
+            }
+            END { print (tag != "" ? tag : "<untagged>") "\t" created }
+        ')
+
+        tag=$(printf '%s' "$result" | cut -f1)
+        created=$(printf '%s' "$result" | cut -f2)
+
+        [ -z "$created" ] && continue
+
+        created_clean=$(echo "$created" | sed 's/\.[0-9]*Z/Z/')
+        created_ts=$(date -d "$created_clean" +%s 2>/dev/null || echo 0)
+        [ "$created_ts" -eq 0 ] && continue
+
+        if [ "$created_ts" -lt "$CUTOFF" ]; then
+            if k3s crictl rmi "$id" >/dev/null 2>&1; then
+                echo "  Removed: $tag ($id)"
+            else
+                echo "  Skipped (in use): $tag ($id)"
+            fi
+        fi
+    done
+
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] 清理完畢"

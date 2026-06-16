@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+vars:
+  # 這裡填寫你的 VHDX 實體路徑
+  VHDX_FILE: 'C:\Users\user\AppData\Local\wsl\{b978a8ca-979f-4c7f-a7aa-c4bc004c0053}\ext4.vhdx'
+  # 指定 PowerShell 路徑
+  PS_EXE: '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+tasks:
+  scan-disk:
+    desc: '掃描硬碟使用狀態'
+    cmd: bash scripts/bin/dev/check-disk.sh
+
+  k3s-image-clean:
+    desc: '清理K3s 多餘的image'
+    cmd: sudo k3s crictl rmi --prune
+  host-clean:
+    desc: 從 WSL 發起宿主機清理 (彈出新視窗執行，避免 WSL 斷線影響)
+    cmd: bash scripts/bin/dev/clean-host.sh
+    silent: true
+    
+  back-up:
+    desc: wsl 備分
+    cmds:
+      - sudo systemctl stop k3s
+      - sudo systemctl stop docker.socket
+      - sudo systemctl stop docker
+      - bash scripts/bin/dev/backup-wsl.sh
+    silent: true

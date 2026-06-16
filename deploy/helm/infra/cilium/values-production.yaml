@@ -1,0 +1,59 @@
+cilium:
+  kubeProxyReplacement: "true"
+  hostServices:
+    enabled: true
+  bpf:
+    masquerade: true # 讓 Pod 出網的流量用 eBPF 處理，這在 K8s 內部是一致的
+  enableIPv4Masquerade: true
+  routingMode: "tunnel"
+  tunnelProtocol: "vxlan" # 生產環境若跨網段也常用此模式，且對 Host 路由表最乾淨
+  k8sServiceHost: "127.0.0.1" # <-- 替換為你的 Control Plane VIP
+  k8sServicePort: 6443
+  devices: "ens+,eth+"
+
+  autoDirectNodeRoutes: false
+  # 必須定義你的 Pod CIDR 範圍，確保路由正確
+  ipv4NativeRoutingCIDR: "10.42.0.0/16"  # kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'
+
+  operator:
+    replicas: 1                 # 生產環境必須為 2，避免單點故障，但是這裡只有單台機器，所以只能這樣。
+    prometheus:
+      enabled: true             # 開啟監控指標供 Grafana 使用
+
+  ipam:
+    mode: "cluster-pool"
+    operator:
+      clusterPoolIPv4PodCIDRList: ["10.42.0.0/16"]
+      clusterPoolIPv4MaskSize: 24
+
+  hubble:
+    enabled: true
+    relay:
+      enabled: true
+    ui:
+      enabled: true
+    tls:
+      auto:
+        method: cronJob
+        certValidityDuration: 1095 # 生產環境可以把有效期拉長（例如三年）
+    metrics:
+      enabled:
+        - dns
+        - drop
+        - tcp
+        - flow
+        - icmp
+        - http
+
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
+    requests:
+      cpu: 100m
+      memory: 512Mi
+
+  certgen:
+    podTemplateSpec:
+      spec:
+        hostNetwork: true

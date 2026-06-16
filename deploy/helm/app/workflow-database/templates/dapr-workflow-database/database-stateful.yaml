@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    io.kompose.network/service-app-network: "true"
+    io.kompose.service: dapr-workflow-database
+    io.kompose.network/dapr-workflow-database-network: "true"
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: dapr-workflow-database
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  serviceName: "dapr-workflow-database"
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.network/service-app-network: "true"
+      io.kompose.network/dapr-workflow-database-network: "true"
+      io.kompose.service: dapr-workflow-database
+  template:
+    metadata:
+      labels:
+        io.kompose.network/service-app-network: "true"
+        io.kompose.network/dapr-workflow-database-network: "true"
+        io.kompose.service: dapr-workflow-database
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane 
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+        - name: temporal-postgre-db
+          image: postgres:17-alpine # 使用 Alpine 版本更輕量
+          args: ["-c", "config_file=/etc/postgresql/postgresql.conf","-c","hba_file=/etc/postgresql/pg_hba.conf"]
+          envFrom:
+            - secretRef:
+                name: workflow-database-secret
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: TZ
+              value: Asia/Taipei
+          resources:
+            requests:
+              cpu: {{ .Values.temporal_database.resources.requests.cpu | default "500m"}}
+              memory: {{ .Values.temporal_database.resources.requests.memory | default "1Gi"}}
+            limits:
+              cpu: {{ .Values.temporal_database.resources.limits.cpu | default "500m"}}
+              memory: {{ .Values.temporal_database.resources.limits.memory | default "1Gi"}}
+          ports:
+            - containerPort: 5432 # 注意 Postgres 埠號
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: database-data
+            - mountPath: /docker-entrypoint-initdb.d/setup.sh
+              name: database-config
+              subPath: setup.sh
+              readOnly: true
+            - name: database-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+              readOnly: true
+            - name: database-config
+              mountPath: /etc/postgresql/pg_hba.conf
+              subPath: pg_hba.conf
+              readOnly: true
+      volumes:
+        - name: database-config
+          configMap:
+            name: database-config
+
+  volumeClaimTemplates:
+  - metadata:
+      name: database-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "local-path" # 明確指定 K3s 的儲存類別
+      resources:
+        requests:
+          storage: {{ .Values.temporal_database.storage | default "1Gi"}}

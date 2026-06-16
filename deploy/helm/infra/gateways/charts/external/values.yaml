@@ -1,0 +1,29 @@
+pulse:
+  hostname: pulse.local
+  middlewares: "gateway-external-security-headers@kubernetescrd, gateway-external-body-size@kubernetescrd, gateway-pulse-ip-allowlist@kubernetescrd"
+
+common:
+  traefik:
+    ingressClass:
+      name: external-traefik
+    ports:
+      web:
+        hostPort: 80
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+      websecure:
+        hostPort: 443
+        tls:
+          enabled: true
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+        ephemeral-storage: "512Mi"
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+        ephemeral-storage: "5Gi"

@@ -1,0 +1,10 @@
+forgejo:
+  config:
+    server:
+      DOMAIN: "forgejo.local"
+      ROOT_URL: "http://forgejo.local"
+      SSH_DOMAIN: "forgejo.local"
+
+persistence:
+  storageClass: ""  # 使用 k3d 預設的 local-path
+  size: 5Gi

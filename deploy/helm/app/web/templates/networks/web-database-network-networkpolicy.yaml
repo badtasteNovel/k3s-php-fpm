@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    # 這裡放你原本想寫的第二個名字，作為說明
+    network-type: "web-database-policy"
+    description: "限制/擴展某些流量可以進入database"
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+  name: web-database-network
+  namespace: web
+spec:
+  podSelector: 
+    matchLabels:
+      io.kompose.service: database
+  policyTypes:
+   - Ingress
+  ingress: # 入站流量
+    - from: 
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: service
+        podSelector:
+          matchLabels:
+            app: road-runner
+            io.kompose.network/service-app-network: "true"

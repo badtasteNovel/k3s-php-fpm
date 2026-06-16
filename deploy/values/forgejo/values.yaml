@@ -1,0 +1,48 @@
+gitea:
+  admin:
+    existingSecret: forgejo-admin-secret  # kubectl create secret generic forgejo-admin-secret --from-literal=username=admin --from-literal=password=<pwd> -n forgejo
+
+  config:
+    server:
+      DOMAIN: ""       # 由各環境 values 覆蓋
+      ROOT_URL: ""     # 由各環境 values 覆蓋
+      SSH_DOMAIN: ""   # 由各環境 values 覆蓋
+
+    database:
+      DB_TYPE: postgres
+
+    service:
+      DISABLE_REGISTRATION: false
+
+    cache:
+      ADAPTER: db
+
+    session:
+      PROVIDER: db
+
+    queue:
+      TYPE: persistable-channel
+
+persistence:
+  enabled: true
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce
+
+service:
+  http:
+    type: ClusterIP
+    port: 3000
+  ssh:
+    type: ClusterIP
+    port: 22
+
+# 關閉 chart 內建的 Redis/PostgreSQL（使用外部 forgejo-db）
+redis-cluster:
+  enabled: false
+redis:
+  enabled: false
+postgresql:
+  enabled: false
+postgresql-ha:
+  enabled: false

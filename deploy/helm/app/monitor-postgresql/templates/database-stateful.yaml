@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    io.kompose.service: {{ .Release.Name }}
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name | quote }}
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        io.kompose.service: {{ .Release.Name }}
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane
+                operator: DoesNotExist
+      {{- end }}
+      containers:
+        - name: {{ .Release.Name }}
+          image: postgres:17-alpine
+          args: ["-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+          envFrom:
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: TZ
+              value: Asia/Taipei
+          resources:
+            requests:
+              cpu: {{ .Values.database.resources.requests.cpu | default "100m" | quote }}
+              memory: {{ .Values.database.resources.requests.memory | default "256Mi" | quote }}
+            limits:
+              cpu: {{ .Values.database.resources.limits.cpu | default "500m" | quote }}
+              memory: {{ .Values.database.resources.limits.memory | default "512Mi" | quote }}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - mountPath: /var/lib/postgresql/data
+              name: data
+            - mountPath: /docker-entrypoint-initdb.d/setup.sh
+              name: config
+              subPath: setup.sh
+              readOnly: true
+            - mountPath: /etc/postgresql/postgresql.conf
+              name: config
+              subPath: postgresql.conf
+              readOnly: true
+            - mountPath: /etc/postgresql/pg_hba.conf
+              name: config
+              subPath: pg_hba.conf
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: {{ .Values.storageClass | default "local-path" }}
+      resources:
+        requests:
+          storage: {{ .Values.database.storage | default "5Gi" }}

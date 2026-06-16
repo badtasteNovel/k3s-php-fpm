@@ -1,0 +1,31 @@
+grafana:
+  ingress:
+    enabled: false  # 走 gateway 路由，不用 grafana 自己的 ingress
+
+  adminUser: admin
+  adminPassword: "changeme"  # 建議改成從 secret 讀取
+
+  persistence:
+    enabled: true
+    size: 5Gi
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi

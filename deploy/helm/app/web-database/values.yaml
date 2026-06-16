@@ -1,0 +1,13 @@
+singleNode: true
+sql:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "1Gi"
+database: # 資料庫的大小
+  storage: 1Gi
+  innodb_aio: 1
+  max_connections: 100

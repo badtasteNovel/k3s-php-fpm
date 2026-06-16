@@ -1,0 +1,13 @@
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: external-transport
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+spec:
+  maxIdleConnsPerHost: 32
+  forwardingTimeouts:
+    dialTimeout: 60s
+    responseHeaderTimeout: 60s
+    readIdleTimeout: 60s

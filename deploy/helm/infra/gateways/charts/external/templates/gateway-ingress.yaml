@@ -1,0 +1,61 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: external-gateway
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    tier: gateway
+    {{ include "common.gateway.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "common.gateway.metadata.annotations.release" . | nindent 4 }}
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      gateway-external-security-headers@kubernetescrd,
+      gateway-external-body-size@kubernetescrd,
+      gateway-external-rate-limit@kubernetescrd
+spec:
+  ingressClassName: external-traefik
+  tls:
+  - hosts:
+    - sureway.local
+    - lg-laravel.local
+    - portainer.local
+    - temporal.local
+    - forgejo.local
+    - argo.local
+    - grafana.local
+    - registry-ui.local
+  rules:
+  - host: "sureway.local"
+    http:
+      paths: &web_path
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: external-gateway-proxy
+            port:
+              number: 80
+  - host: lg-laravel.local
+    http:
+      paths: *web_path
+  - host: temporal.local
+    http:
+      paths: *web_path
+  - host: portainer.local
+    http:
+      paths: *web_path
+  - host: registry-ui.local
+    http:
+      paths: *web_path
+  - host: forgejo.local
+    http:
+      paths: *web_path
+  - host: argo.local
+    http:
+      paths: *web_path
+  - host: grafana.local
+    http:
+      paths: *web_path
+

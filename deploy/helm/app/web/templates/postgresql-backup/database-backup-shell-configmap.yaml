@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-backup-shell
+  namespace: web # <--- 這裡指定門牌號碼
+data:
+  database-backup.sh: |
+    #!/bin/sh
+
+    RECENT_COUNT=$(find /backups -name "${PROJECT_NAME}_*.sql.gz" -mmin -7200 | wc -l)
+    TODAY_FILE="/backups/${PROJECT_NAME}_$(date +%Y%m%d).sql.gz"
+    if [ "$RECENT_COUNT" -ge 5 ]; then
+    :
+    elif [ -f "$TODAY_FILE" ]; then
+    :
+    else
+    # PGPASSWORD 是 Postgres 官方認可的密碼傳遞方式
+      # -h 伺服器, -U 使用者, -d 資料庫
+    PGPASSWORD="${DB_BACKUP_PASSWORD}" pg_dump \
+            -h database \
+            -U "${DB_BACKUP_USERNAME}" \
+            -d "${DB_DATABASE}" \
+            --no-owner \
+            --no-privileges \
+            | gzip > "$TODAY_FILE"
+
+    # 3. 刪除 30 天前的舊備份
+    find /backups -name "${PROJECT_NAME}_*.sql.gz" -mtime +30 -delete
+    fi
+

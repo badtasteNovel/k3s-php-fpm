@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k3s-image-cleaner
+  namespace: kube-system
+spec:
+  schedule: {{ .Values.imageCleaner.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          hostPID: true
+          tolerations:
+            - effect: NoSchedule
+              operator: Exists
+          nodeSelector:
+            node-role.kubernetes.io/control-plane: "true"
+          containers:
+            - name: image-cleaner
+              image: {{ .Values.imageCleaner.image.repository }}:{{ .Values.imageCleaner.image.tag }}
+              command: ["/bin/sh", "-c", "cat /scripts/clean.sh | nsenter -t 1 -m -u -i -n -- /bin/sh"]
+              env:
+                - name: DAYS_OLD
+                  value: {{ .Values.imageCleaner.daysOld | quote }}
+              securityContext:
+                privileged: true
+              resources:
+                {{- toYaml .Values.imageCleaner.resources | nindent 16 }}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+          volumes:
+            - name: scripts
+              configMap:
+                name: image-cleaner-script
+                defaultMode: 0755
+          restartPolicy: OnFailure

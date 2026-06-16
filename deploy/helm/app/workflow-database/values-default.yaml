@@ -1,0 +1,10 @@
+# values-default.yaml (開發)
+temporal_database:
+  storage: "1Gi"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "200m"
+      memory: "256Mi"

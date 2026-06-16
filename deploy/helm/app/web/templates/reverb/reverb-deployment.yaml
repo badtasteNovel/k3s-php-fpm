@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    io.kompose.service: reverb
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  name: reverb
+  namespace: web # <--- 這裡指定門牌號碼
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.network/web-redis-network: "true"
+      io.kompose.network/web-app-network: "true"
+      io.kompose.service: reverb
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        io.kompose.network/web-redis-network: "true"
+        io.kompose.network/web-app-network: "true"
+        io.kompose.service: reverb
+      annotations:
+        rollout-timestamp: {{ now | quote }}
+    spec:
+      {{- if not .Values.singleNode }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role.kubernetes.io/control-plane # 這裡是node的標籤(包含 control-plane 化名 server 以及 node 化名 kubelet或agent)
+                operator: DoesNotExist
+      {{- end }}
+      {{- if .Values.development.mount }}
+      initContainers:
+        - name: mount-path
+          image: busybox
+          command: ["sh", "-c", "chown -R 1000:33 /var/www/html/storage /var/www/html/bootstrap/cache && find /var/www/html/storage /var/www/html/bootstrap/cache -type d -exec chmod 775 {} + && find /var/www/html/storage /var/www/html/bootstrap/cache -type f -exec chmod 664 {} +"]
+          volumeMounts:
+            - name: code
+              mountPath: /var/www/html
+      {{- end }}
+      containers:
+          - name: php-reverb
+            envFrom:
+              - secretRef:
+                  name: app-env-secret
+            env:
+              - name: TZ
+                value: Asia/Taipei
+            image: {{ printf "%s:%s" (.Values.php_image.repository | default "registry.local/my-php-release") (.Values.php_image.tag | default "debian-bookworm") | quote }}
+            imagePullPolicy: Always
+            command: ["/bin/sh"]
+            args: ["/scripts/entrypoint.sh"]
+            resources:
+              limits:
+                memory: "1073741824"
+              requests:
+                memory: "134217728"
+            workingDir: /var/www/html
+            volumeMounts:
+              - name: reverb-shell
+                mountPath: /scripts/entrypoint.sh
+                subPath: reverb.sh # 這是 ConfigMap 裡的 Key
+                readOnly: true
+            {{- if .Values.development.mount }}
+              - name: code
+                mountPath: /var/www/html
+            {{- end }}
+      volumes:
+      - name: reverb-shell
+        configMap:
+          name: reverb-shell
+      {{- if .Values.development.mount }}
+      - name: code
+        hostPath:
+          path: {{ .Values.development.mountPath }}
+          type: Directory
+      {{- end }}
+      restartPolicy: Always

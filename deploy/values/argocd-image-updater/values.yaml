@@ -1,0 +1,93 @@
+config:
+  registries:
+    - name: local-registry
+      api_url: https://registry.local
+      prefix: registry.local
+      credentials: pullsecret:argocd/local-registry-auth
+
+extraEnv:
+  - name: SSL_CERT_FILE
+    value: /etc/ssl/certs/registry.local.crt
+  - name: TZ
+    value: Asia/Taipei
+
+volumes:
+  - name: registry-ca
+    secret:
+      secretName: registry-ca
+
+volumeMounts:
+  - name: registry-ca
+    mountPath: /etc/ssl/certs/registry.local.crt
+    subPath: ca.crt
+    readOnly: true
+
+extraObjects:
+  - apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: registry-ca
+      namespace: argocd
+    spec:
+      secretName: registry-ca
+      issuerRef:
+        name: local-ca-issuer
+        kind: ClusterIssuer
+      dnsNames:
+        - registry.local
+  - apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata:
+      name: argocd-image-updater-egress
+      namespace: argocd
+    spec:
+      endpointSelector:
+        matchLabels:
+          app.kubernetes.io/name: argocd-image-updater
+      egress:
+        - toEndpoints:
+            - matchLabels:
+                app.kubernetes.io/name: forgejo
+                io.kubernetes.pod.namespace: forgejo
+          toPorts:
+            - ports:
+                - port: "2222"
+                  protocol: TCP
+        - toEntities:
+            - kube-apiserver
+        - toCIDR:
+            - 169.254.20.10/32
+          toPorts:
+            - ports:
+                - port: "53"
+                  protocol: UDP
+                - port: "53"
+                  protocol: TCP
+        - toEndpoints:
+            - matchLabels:
+                k8s-app: node-local-dns
+                io.kubernetes.pod.namespace: kube-system
+          toPorts:
+            - ports:
+                - port: "53"
+                  protocol: UDP
+                - port: "53"
+                  protocol: TCP
+        - toEndpoints:
+            - matchLabels:
+                k8s-app: kube-dns
+                io.kubernetes.pod.namespace: kube-system
+          toPorts:
+            - ports:
+                - port: "53"
+                  protocol: UDP
+                - port: "53"
+                  protocol: TCP
+        - toEndpoints:
+            - matchLabels:
+                app.kubernetes.io/name: traefik
+                io.kubernetes.pod.namespace: gateway
+          toPorts:
+            - ports:
+                - port: "8443"
+                  protocol: TCP

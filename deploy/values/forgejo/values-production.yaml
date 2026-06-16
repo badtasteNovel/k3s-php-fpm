@@ -1,0 +1,27 @@
+gitea:
+  config:
+    server:
+      DOMAIN: "forgejo.local"
+      ROOT_URL: "https://forgejo.local"
+      SSH_DOMAIN: "forgejo.local"
+
+    database:
+      DB_TYPE: postgres
+      HOST: "forgejo-database.forgejo.svc.cluster.local:5432"
+      NAME: forgejo
+
+  additionalConfigFromEnvs:
+    - name: FORGEJO__database__USER
+      valueFrom:
+        secretKeyRef:
+          name: forgejo-db-secret
+          key: POSTGRES_USER
+    - name: FORGEJO__database__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: forgejo-db-secret
+          key: POSTGRES_PASSWORD
+
+persistence:
+  storageClass: ""
+  size: 500Gi

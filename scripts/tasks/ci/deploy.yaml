@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: '3'
+includes:
+  mount: ../mount.yaml
+  secret: ../secret.yaml
+tasks:
+
+  deploy:
+    desc: "🚀 完整部署：封裝 -> 匯入 -> 部署"
+    silent: true
+    cmds:
+      - task: build
+      - task: import-image
+      - task: start
+      - echo "✅ 部署完成！"
+  build:
+    desc: "📦 封裝生產環境鏡像"
+    interactive: true
+    cmd: bash ./scripts/bin/deploy/build-production.sh skipBaseBuild
+  import-image:
+    desc: "🚚 將鏡像匯入 k3d 叢集"
+    silent: true
+    vars:
+      NODE_IP:
+        sh: kubectl get nodes -o wide | awk 'NR>1 {print $6}' | head -n 1
+    cmds:
+      - helmfile -l tier=cert-manager -e production sync
+      - helmfile -l tier=registry -e production sync
+      - |
+        NODE_IP={{.NODE_IP}}
+        if ! kubectl get certificates -n default -o json | jq -r '.items[].spec.ipAddresses[]?' | grep -q "^${NODE_IP}$"; then
+          echo "❌ 尚未完成憑證簽發，請先執行 task manual:register-cert"
+          exit 1
+        fi
+        echo "✅ 憑證已就緒，Node IP: ${NODE_IP}"
+      - for: [online, production]
+        cmd: bash ./scripts/bin/image-pull.sh {{.ITEM}} --host={{.NODE_IP}} --port=30500
+  _pre-start:
+    desc: "🔧 啟動前的檢查與準備"
+    internal: true
+    silent: true
+    cmds:
+      - |
+        echo "Checking if Helm release 'backup-storage' is installed..."
+        if ! kubectl get pv nas-backup-pv --ignore-not-found | grep -q "nas-backup-pv"; then
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "❌ 錯誤：找不到名為 'nas-backup-pv' 的儲存資源！"
+          echo " 請手動執行 task mount:k8s-database-backup size=500Gi 來設定備份儲存。"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          exit 1
+        fi
+      - kubectl apply -k "deploy/k8s/base"
+      - docker pull rancher/mirrored-coredns-coredns:1.14.1
+      - kubectl delete job database-startup-backup -n "web" --ignore-not-found=true --wait
+      - task: secret:default
+  start:
+    desc: "🚀 啟動生產模式"
+    deps:
+      - _pre-start
+    cmds:
+      - helmfile  -l tier=base -e production sync
+  k8s-database-backup:
+    desc: "轉發到 mount:k8s-database-backup"
+    deps:
+      - mount:k8s-database-backup
+

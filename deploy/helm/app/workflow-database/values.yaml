@@ -1,0 +1,12 @@
+# values-default.yaml (開發)
+singleNode: true
+
+temporal_database:
+  storage: "1Gi"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "300m"
+      memory: "512Mi"

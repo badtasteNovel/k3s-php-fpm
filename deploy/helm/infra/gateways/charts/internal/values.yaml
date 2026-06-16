@@ -1,0 +1,26 @@
+pulse:
+  hostname: pulse.local
+
+common:
+  traefik:
+    ingressClass:
+      name: internal-traefik
+    ports:
+      web:
+        expose:
+          default: true
+      websecure:
+        expose:
+          default: false
+    service:
+      type: ClusterIP
+    replicaCount: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 150Mi
+        ephemeral-storage: "512Mi"
+      limits:
+        cpu: 500m
+        memory: 300Mi
+        ephemeral-storage: "5Gi"

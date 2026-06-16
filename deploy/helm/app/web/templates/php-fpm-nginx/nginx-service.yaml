@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: web # <--- 這裡指定門牌號碼
+  labels:
+    {{ include "base.metadata.labels.managed_by" . | nindent 4 }}
+  annotations:
+    {{ include "base.metadata.annotations.release" . | nindent 4 }}
+spec:
+  selector:
+    io.kompose.service: nginx
+  ports:
+    - protocol: TCP
+      port: 80           # 其他 Pod 訪問 php-reverb 時用的 Port
+      targetPort: 80      # Reverb 容器內實際聽的 Port
+
