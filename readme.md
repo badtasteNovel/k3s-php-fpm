@@ -14,7 +14,13 @@ sh -c "$(curl -ssL https://taskfile.dev/install.sh)" -- -d -b /tmp && sudo mv /t
 │   ├── helm/         # Helm charts（app / infra / base）
 │   ├── k8s/          # Kubernetes namespace manifests
 │   ├── ops/          # ops shell pod
-│   └── values/       # 各服務的 Helm values（argocd / forgejo / monitoring / temporal）
+│   └── values/       # 各服務的 Helm values
+│       ├── argocd/
+│       ├── argocd-image-updater/
+│       ├── forgejo/
+│       ├── monitoring/
+│       ├── smb/
+│       └── temporal/
 ├── scripts/
 │   ├── tasks/        # Taskfile includes
 │   ├── bin/          # Shell scripts（install、deploy、secret、database 等）
@@ -25,10 +31,8 @@ sh -c "$(curl -ssL https://taskfile.dev/install.sh)" -- -d -b /tmp && sudo mv /t
 │   ├── portainer/
 │   └── postgresql/
 ├── Taskfile.yaml
-├── Makefile
 ├── .env.task.example
-├── .env.example
-└── smb-default-values.yaml
+└── .env.example
 ```
 
 ## 快速開始
